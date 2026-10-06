@@ -1,0 +1,8 @@
+# Optional overlay. Use it only with MQTT_ALLOW_PLAINTEXT=true:
+#   docker compose -f docker-compose.yml -f infra/mosquitto/plaintext-ports.yml up -d
+# The default compose file does not publish port 1883.
+
+services:
+  mosquitto:
+    ports:
+      - "1883:1883"

@@ -1,10 +1,165 @@
-# Skeleton only: project name and shared network.
-# Services (Mosquitto, PostgreSQL, API, dashboard, Nginx) are added in later steps.
-# No container is started by this file.
+# Server path: PostgreSQL, Mosquitto TLS, API, and dashboard.
+# Port 1883 is not published here. See infra/mosquitto/plaintext-ports.yml.
+# 8883 is reachable on the LAN so the NodeMCU can connect.
+# The API and the dashboard stay on localhost until Nginx serves HTTPS.
 
 name: sentinel-x
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - sentinelx
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  mosquitto:
+    build:
+      context: ./infra/mosquitto
+    environment:
+      MQTT_USERNAME: ${MQTT_USERNAME}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+      MQTT_API_USERNAME: ${MQTT_API_USERNAME}
+      MQTT_API_PASSWORD: ${MQTT_API_PASSWORD}
+      MQTT_ALLOW_PLAINTEXT: ${MQTT_ALLOW_PLAINTEXT:-false}
+      MQTT_TOPIC_BASE: ${MQTT_TOPIC_BASE:-sentinelx/g6}
+    volumes:
+      - ./infra/certs:/mosquitto/certs:ro
+    ports:
+      - "8883:8883"
+    networks:
+      - sentinelx
+    healthcheck:
+      test: ["CMD-SHELL", "pidof mosquitto || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "8883"
+      MQTT_API_USERNAME: ${MQTT_API_USERNAME}
+      MQTT_API_PASSWORD: ${MQTT_API_PASSWORD}
+      MQTT_TOPIC_BASE: ${MQTT_TOPIC_BASE:-sentinelx/g6}
+      MQTT_CA_CERT: /certs/ca.crt
+      API_CORS_ORIGINS: http://127.0.0.1:8080,http://localhost:5173
+    volumes:
+      - ./infra/certs/ca.crt:/certs/ca.crt:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks:
+      - sentinelx
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./dashboard
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - sentinelx
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  proxy:
+    image: nginxinc/nginx-unprivileged:1.27-alpine
+    volumes:
+      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./infra/certs:/etc/nginx/certs:ro
+    ports:
+      - "443:8080"
+    networks:
+      - sentinelx
+    depends_on:
+      - dashboard
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - sentinelx
+    depends_on:
+      - cadvisor
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - sentinelx
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  cadvisor:
+    # Reads the host cgroup and Docker layer store. Those paths are root-only,
+    # so this process cannot drop privileges and still report container CPU/RAM.
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    networks:
+      - sentinelx
+    restart: unless-stopped
+
+  dozzle:
+    image: amir20/dozzle:v8.12.5
+    user: "1000:984"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "127.0.0.1:8082:8080"
+    networks:
+      - sentinelx
+    restart: unless-stopped
 
 networks:
   sentinelx:
     name: sentinelx
     driver: bridge
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:

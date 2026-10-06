@@ -7,7 +7,8 @@ Menaces couvertes par le sujet : cyberattaques, intrusion physique, risques envi
 Chemin visé : carte NodeMCU (ou simulateur) → MQTTS → FastAPI → PostgreSQL → dashboard Vue.
 La caméra du laptop serveur est analysée à part (YOLOv8) et envoie ses alertes à l’API.
 
-Ce dépôt est un squelette. Aucun service n’est encore démarré.
+Le chemin serveur (Mosquitto, PostgreSQL, API, dashboard) se lance avec Docker Compose.
+Le firmware de la carte vit à part, dans `firmware/`.
 
 ## Réel et simulé
 
@@ -39,16 +40,45 @@ docs/         Documentation complémentaire.
 ```
 
 L’adresse IP du laptop n’est jamais codée en dur : firmware dans `config.h`, services dans `.env`.
-Le certificat TLS du serveur devra contenir cette IP et pourra être régénéré sans changer l’autorité de certification.
+Le script `infra/scripts/regen-server-cert.sh` met cette IP dans les certificats MQTT et HTTPS, sans changer l’autorité.
 
-## Démarrage
+## Installation sur une machine vierge
 
-1. Copier `.env.example` vers `.env` et remplacer les valeurs `change-me`.
-2. Ne pas committer `.env`, `config.h`, ni aucune clé privée.
+Prérequis : Docker avec Compose, OpenSSL, Python 3.11.
 
-`docker compose up` ne lance encore aucun conteneur : le fichier ne déclare que le projet `sentinel-x` et le réseau `sentinelx`. Mosquitto et PostgreSQL arrivent à l’étape suivante.
+1. Copier `.env.example` vers `.env`. Remplacer chaque `change-me`. Mettre dans `SERVER_IP` l’adresse du laptop sur le partage de connexion du téléphone (Wi-Fi 2,4 GHz). Cette adresse n’est écrite nulle part dans le code.
+2. Générer les certificats : `./infra/scripts/regen-server-cert.sh`. Si l’IP change, relancer le script. L’autorité reste la même : la carte n’a pas à être reflasher pour lui refaire confiance. Seul `ca.crt` est public. Les clés restent sur la machine.
+3. Lancer la pile : `docker compose up -d --build`.
+4. Faire confiance à `infra/certs/ca.crt` dans le navigateur, puis ouvrir https://127.0.0.1 . Le dashboard HTTP direct reste sur http://127.0.0.1:8080 .
+5. Mesures sans la carte :
+
+```bash
+python3 -m venv simulator/.venv
+simulator/.venv/bin/pip install -r simulator/requirements.txt
+simulator/.venv/bin/python simulator/simulate.py
+```
+
+6. Détection de personne, sur l’hôte (la caméra n’est pas visible dans Docker) :
+
+```bash
+python3 -m venv vision/.venv
+vision/.venv/bin/pip install -r vision/requirements.txt
+vision/.venv/bin/python vision/main.py
+```
+
+`VIDEO_SOURCE=0` utilise la caméra intégrée. Si elle n’est pas là, mettre dans `.env` le chemin d’une vidéo ou d’une photo. Le flux apparaît dans le panneau Vidéo. Une personne crée une alerte.
+
+7. Anomalies : le modèle est déjà entraîné (`api/ml_training/train_isolation_forest.py` le refait sur le scénario `normal`). Le scénario « Dérive » du dashboard doit finir par une alerte. Ce n’est pas un seuil du type `temp > 40`.
+
+8. Carte : le firmware est dans `firmware/` et se flashe à part. Copier `infra/certs/ca.crt` vers la carte au moment du flash. Le contrat MQTT est dans `docs/mqtt.md`.
+
+PostgreSQL n’écoute pas sur le port 5432 de la machine. Session : `docker compose exec postgres psql -U sentinelx -d sentinelx`.
+
+Supervision, en local seulement : Grafana http://127.0.0.1:3000 , Prometheus http://127.0.0.1:9090 , journaux http://127.0.0.1:8082 . Les règles de pare-feu sont dans `docs/pare-feu.md`.
+
+Ne pas committer `.env`, `config.h`, ni aucune clé privée. Le port 1883 n’est pas ouvert.
 
 ## Secrets
 
 Interdits dans Git : mots de passe, identifiants WiFi, `.env`, `config.h`, clés privées (`*.key`, `*.pem`).
-Seul le certificat public de l’autorité (`ca.crt`) sera versionné, au moment du firmware.
+Seul le certificat public de l’autorité (`infra/certs/ca.crt`) peut être versionné. La carte le recevra au moment du flash ; il n’est pas copié dans `firmware/` par le chemin serveur.
