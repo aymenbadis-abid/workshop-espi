@@ -8,6 +8,7 @@ const alerts = ref([]);
 const status = ref(null);
 const connected = ref(false);
 const commandMessage = ref("");
+const focusDevice = ref(null);
 const videoUrl = "/video/stream";
 let socket;
 let pingTimer;
@@ -29,7 +30,21 @@ const statusLabel = computed(() => {
   return status.value.online ? "En ligne" : "Hors ligne";
 });
 
+function prefersBoard(current, incoming) {
+  if (!current) return incoming;
+  if (incoming?.device === "esp32-01") return incoming;
+  if (current.device === "esp32-01") return current;
+  return incoming;
+}
+
 function pushReading(row) {
+  if (row.device === "esp32-01" && focusDevice.value !== "esp32-01") {
+    focusDevice.value = "esp32-01";
+    readings.value = [row];
+    return;
+  }
+  if (!focusDevice.value) focusDevice.value = row.device;
+  if (row.device !== focusDevice.value) return;
   const next = readings.value.concat(row);
   readings.value = next.slice(-MAX_POINTS);
 }
@@ -40,11 +55,16 @@ async function loadInitial() {
     fetch("/api/v1/alerts?limit=20"),
     fetch("/api/v1/status"),
   ]);
-  if (telemetryRes.ok) readings.value = await telemetryRes.json();
+  if (telemetryRes.ok) {
+    const rows = await telemetryRes.json();
+    const boardRows = rows.filter((row) => row.device === "esp32-01");
+    readings.value = boardRows.length ? boardRows : rows;
+    focusDevice.value = readings.value.at(-1)?.device ?? null;
+  }
   if (alertsRes.ok) alerts.value = await alertsRes.json();
   if (statusRes.ok) {
     const rows = await statusRes.json();
-    status.value = rows[0] ?? null;
+    status.value = rows.reduce((current, row) => prefersBoard(current, row), null);
   }
 }
 
@@ -61,8 +81,11 @@ function connect() {
   socket.onmessage = (event) => {
     const message = JSON.parse(event.data);
     if (message.kind === "telemetry") pushReading(message.data);
-    if (message.kind === "alert") alerts.value = [message.data, ...alerts.value].slice(0, 20);
-    if (message.kind === "status") status.value = message.data;
+    if (message.kind === "alert") {
+      alerts.value = [message.data, ...alerts.value].slice(0, 20);
+      if (message.data.type === "ack") commandMessage.value = message.data.message;
+    }
+    if (message.kind === "status") status.value = prefersBoard(status.value, message.data);
   };
 }
 
@@ -149,6 +172,12 @@ onBeforeUnmount(() => {
         <div class="buttons">
           <button type="button" @click="sendCommand({ target: 'led_green', state: 'on' })">Allumer</button>
           <button type="button" @click="sendCommand({ target: 'led_green', state: 'off' })">Éteindre</button>
+        </div>
+        <p class="muted">Buzzer</p>
+        <div class="buttons">
+          <button type="button" @click="sendCommand({ target: 'buzzer', state: 'on' })">Allumer</button>
+          <button type="button" @click="sendCommand({ target: 'buzzer', state: 'off' })">Éteindre</button>
+          <button type="button" @click="sendCommand({ auto: true })">Auto</button>
         </div>
         <p class="muted">{{ commandMessage }}</p>
       </section>

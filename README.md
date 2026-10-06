@@ -4,7 +4,7 @@ Boîtier de surveillance connecté pour une micro-centrale fictive, isolée et s
 Menaces couvertes par le sujet : cyberattaques, intrusion physique, risques environnementaux
 (fuite de gaz, surchauffe).
 
-Chemin visé : carte NodeMCU (ou simulateur) → MQTTS → FastAPI → PostgreSQL → dashboard Vue.
+Chemin visé : carte ESP32 (ou simulateur) → MQTTS → FastAPI → PostgreSQL → dashboard Vue.
 La caméra du laptop serveur est analysée à part (YOLOv8) et envoie ses alertes à l’API.
 
 Le chemin serveur (Mosquitto, PostgreSQL, API, dashboard) se lance avec Docker Compose.
@@ -14,13 +14,14 @@ Le firmware de la carte vit à part, dans `firmware/`.
 
 Réel :
 
-- NodeMCU v2 (ESP8266) : WiFi, NTP, TLS, MQTTS
-- Lumière : photorésistance + résistance 10 kΩ sur A0
-- LED rouge (D5) et LED verte (D6), chacune avec une résistance 220 Ω
-- Écran OLED SSD1306 128×64, I2C `0x3C` (SDA = D2, SCL = D1), alimenté en 3,3 V
+- ESP32 (`esp32-01`) : WiFi, NTP, TLS, MQTTS
+- Lumière : capteur sur GPIO 34
+- LED rouge (GPIO 27) et LED verte (GPIO 26), chacune avec une résistance 220 Ω
+- Buzzer sur GPIO 25
+- Écran OLED SSD1306 128×64, I2C `0x3C` (SDA = GPIO 21, SCL = GPIO 22), alimenté en 3,3 V
 - Caméra intégrée du laptop qui héberge le serveur
 
-Simulé dans le firmware, voie par voie (`SIMULATE_TEMP`, `SIMULATE_HUM`, `SIMULATE_GAS`) :
+Simulé dans le firmware (champ `simulated`) :
 
 - Température, humidité, gaz / fumée
 - La détection de personne ne passe pas par la carte : elle est faite par la caméra du serveur
@@ -30,7 +31,7 @@ La télémétrie listera les voies simulées dans le champ `simulated`. Le dashb
 ## Arborescence
 
 ```
-firmware/     PlatformIO (ESP8266). config.h réel ignoré par Git.
+firmware/     PlatformIO (ESP32). config.h réel ignoré par Git.
 api/          FastAPI, architecture router → service → models.
 vision/       Détection de personne, processus sur l’hôte (pas dans Docker).
 dashboard/    Vue 3.
@@ -70,7 +71,7 @@ vision/.venv/bin/python vision/main.py
 
 7. Anomalies : le modèle est déjà entraîné (`api/ml_training/train_isolation_forest.py` le refait sur le scénario `normal`). Le scénario « Dérive » du dashboard doit finir par une alerte. Ce n’est pas un seuil du type `temp > 40`.
 
-8. Carte : le firmware est dans `firmware/` et se flashe à part. Copier `infra/certs/ca.crt` vers la carte au moment du flash. Le contrat MQTT est dans `docs/mqtt.md`.
+8. Carte : voir `firmware/README.md`. Le certificat public est déjà compilé dans `firmware/include/ca_cert.h`. Le contrat MQTT est dans `docs/mqtt.md`.
 
 PostgreSQL n’écoute pas sur le port 5432 de la machine. Session : `docker compose exec postgres psql -U sentinelx -d sentinelx`.
 
@@ -81,4 +82,4 @@ Ne pas committer `.env`, `config.h`, ni aucune clé privée. Le port 1883 n’es
 ## Secrets
 
 Interdits dans Git : mots de passe, identifiants WiFi, `.env`, `config.h`, clés privées (`*.key`, `*.pem`).
-Seul le certificat public de l’autorité (`infra/certs/ca.crt`) peut être versionné. La carte le recevra au moment du flash ; il n’est pas copié dans `firmware/` par le chemin serveur.
+Seul le certificat public de l’autorité peut être versionné (`infra/certs/ca.crt` et sa copie `firmware/include/ca_cert.h`).

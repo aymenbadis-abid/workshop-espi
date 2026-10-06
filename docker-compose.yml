@@ -1,6 +1,6 @@
 # Server path: PostgreSQL, Mosquitto TLS, API, and dashboard.
 # Port 1883 is not published here. See infra/mosquitto/plaintext-ports.yml.
-# 8883 is reachable on the LAN so the NodeMCU can connect.
+# 8883 is reachable on the LAN so the ESP32 can connect.
 # The API and the dashboard stay on localhost until Nginx serves HTTPS.
 
 name: sentinel-x
@@ -56,6 +56,7 @@ services:
       MQTT_API_USERNAME: ${MQTT_API_USERNAME}
       MQTT_API_PASSWORD: ${MQTT_API_PASSWORD}
       MQTT_TOPIC_BASE: ${MQTT_TOPIC_BASE:-sentinelx/g6}
+      MQTT_DEVICE_BASE: ${MQTT_DEVICE_BASE:-sentinelx/esp32-01}
       MQTT_CA_CERT: /certs/ca.crt
       API_CORS_ORIGINS: http://127.0.0.1:8080,http://localhost:5173
     volumes:

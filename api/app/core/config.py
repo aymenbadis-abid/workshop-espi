@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     mqtt_api_username: str
     mqtt_api_password: str
     mqtt_topic_base: str = "sentinelx/g6"
+    mqtt_device_base: str = "sentinelx/esp32-01"
     mqtt_ca_cert: str = "/certs/ca.crt"
     anomaly_model_path: str = "/app/ml_training/models/isolation_forest.joblib"
     api_cors_origins: str = "http://localhost:5173,http://127.0.0.1:8080"

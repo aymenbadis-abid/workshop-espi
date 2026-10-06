@@ -11,11 +11,10 @@ router = APIRouter()
     response_model=CommandOut,
     summary="Envoyer une commande au boîtier",
     description=(
-        "Publie sur sentinelx/g6/cmd une commande LED "
-        "(target led_red ou led_green, state on ou off) "
-        "ou un scénario de simulation (normal, drift, gas_leak, reset). "
-        "Le simulateur et la carte reçoivent le même message. "
-        "L'allumage physique des LEDs n'a lieu que lorsque la carte est connectée."
+        "Envoie une commande au boîtier ESP32 sur sentinelx/esp32-01/cmd "
+        "(led_red:1, led_green:0, buzzer:1, auto, scenario:drift) "
+        "et, pour les LED et les scénarios, le JSON équivalent au simulateur "
+        "sur sentinelx/g6/cmd. La carte répond sur sentinelx/esp32-01/ack."
     ),
 )
 async def post_command(body: CommandIn) -> CommandOut:
