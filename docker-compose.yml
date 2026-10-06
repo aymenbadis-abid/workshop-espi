@@ -1,0 +1,10 @@
+# Skeleton only: project name and shared network.
+# Services (Mosquitto, PostgreSQL, API, dashboard, Nginx) are added in later steps.
+# No container is started by this file.
+
+name: sentinel-x
+
+networks:
+  sentinelx:
+    name: sentinelx
+    driver: bridge
