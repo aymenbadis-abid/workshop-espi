@@ -1,0 +1,46 @@
+# Secrets and local config. Never commit real credentials or private keys.
+.env
+.env.*
+!.env.example
+config.h
+*.key
+*.p12
+*.pfx
+*.pem
+!ca.crt
+
+# Private material under cert folders. The public CA cert (ca.crt) stays tracked.
+firmware/certs/*
+!firmware/certs/.gitkeep
+!firmware/certs/ca.crt
+infra/certs/*
+!infra/certs/.gitkeep
+!infra/certs/ca.crt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Vue
+node_modules/
+dist/
+.vite/
+
+# PlatformIO
+.pio/
+
+# Heavy model weights (YOLOv8 and similar). Small training artifacts are added explicitly later.
+*.pt
+*.onnx
+*.weights
+*.engine
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log
