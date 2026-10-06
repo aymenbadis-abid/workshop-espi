@@ -1,0 +1,14 @@
+# Device (and the Python simulator, which uses the same account):
+# publish measurements and events, subscribe to commands only.
+user esp01
+topic write sentinelx/g6/telemetry
+topic write sentinelx/g6/alerts
+topic write sentinelx/g6/status
+topic read sentinelx/g6/cmd
+
+# API: ingest device traffic, publish commands. No publish on telemetry.
+user api
+topic read sentinelx/g6/telemetry
+topic read sentinelx/g6/alerts
+topic read sentinelx/g6/status
+topic write sentinelx/g6/cmd
