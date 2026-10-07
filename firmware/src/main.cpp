@@ -11,6 +11,7 @@
 #include <PubSubClient.h>
 #include <math.h>
 #include <time.h>
+#include <sys/time.h>
 
 #if __has_include("config.h")
 #include "config.h"
@@ -43,6 +44,10 @@
 #define TEMP_DANGER_CLEAR_C 33.0f
 
 #define READ_PERIOD_MS 200
+// Used only if the hotspot blocks NTP. Must stay after the broker certificate notBefore.
+#ifndef BUILD_EPOCH
+#define BUILD_EPOCH 1791365334L
+#endif
 #define STABLE_READS 3
 #define SEND_PERIOD_MS 5000
 #define WINDOW_MS 60000UL
@@ -74,7 +79,6 @@ unsigned long eventTimes[MAX_EVENTS];
 int eventCount = 0;
 unsigned long lastRead = 0;
 unsigned long lastSend = 0;
-unsigned long lastBeep = 0;
 unsigned long lastWifiTry = 0;
 unsigned long lastMqttTry = 0;
 unsigned long lastDht = 0;
@@ -88,17 +92,6 @@ int ovBuzzer = -1;
 enum Scenario { SC_NORMAL, SC_DRIFT, SC_GAS };
 Scenario scenario = SC_NORMAL;
 float scenarioElapsed = 0;
-
-void beep(int freq, int ms) {
-  long period = 1000000L / freq;
-  long cycles = (long)ms * 1000L / period;
-  for (long i = 0; i < cycles; i++) {
-    digitalWrite(PIN_BUZZER, HIGH);
-    delayMicroseconds(period / 2);
-    digitalWrite(PIN_BUZZER, LOW);
-    delayMicroseconds(period / 2);
-  }
-}
 
 void addEvent(unsigned long now) {
   if (eventCount == MAX_EVENTS) {
@@ -278,11 +271,31 @@ void wifiLoop(unsigned long now) {
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 }
 
+bool clockReady(unsigned long now) {
+  if (time(nullptr) > 1700000000L) return true;
+  static unsigned long waitStart = 0;
+  if (waitStart == 0) {
+    waitStart = now;
+    Serial.println("[TIME] waiting for NTP");
+    return false;
+  }
+  if (now - waitStart < 12000) return false;
+  timeval tv = {};
+  tv.tv_sec = BUILD_EPOCH;
+  settimeofday(&tv, nullptr);
+  Serial.print("[TIME] NTP missing, clock set to ");
+  Serial.println((unsigned long)time(nullptr));
+  return time(nullptr) > 1700000000L;
+}
+
 void mqttLoop(unsigned long now) {
   if (WiFi.status() != WL_CONNECTED) return;
   if (!mqtt.connected()) {
+    if (!clockReady(now)) return;
     if (now - lastMqttTry < 5000) return;
     lastMqttTry = now;
+    Serial.print("[TIME] ");
+    Serial.println((unsigned long)time(nullptr));
     Serial.println("[MQTT] connecting");
     char will[80];
     snprintf(will, sizeof(will), "{\"device\":\"%s\",\"online\":false}", DEVICE_ID);
@@ -330,6 +343,10 @@ void readDht(unsigned long now) {
   }
   temperature = nextTemp;
   humidity = nextHum;
+  Serial.print("[DHT] ok ");
+  Serial.print(nextTemp, 1);
+  Serial.print("C ");
+  Serial.println(nextHum, 1);
   HeatLevel next = nextHeatLevel(nextTemp);
   if (next == heat) return;
   heat = next;
@@ -351,15 +368,9 @@ void updateOutputs(unsigned long now) {
   bool alarm = alarmActive();
   bool red = (ovRed == -1) ? alarm : (ovRed == 1);
   bool green = (ovGreen == -1) ? !alarm : (ovGreen == 1);
-  bool buzzer = (ovBuzzer == -1) ? alarm : (ovBuzzer == 1);
   digitalWrite(PIN_LED_R, red ? HIGH : LOW);
   digitalWrite(PIN_LED_G, green ? HIGH : LOW);
-  bool danger = ovBuzzer == -1 && heat == HEAT_DANGER;
-  unsigned long period = (ovBuzzer == 1 || danger) ? 800 : 2000;
-  if (buzzer && now - lastBeep > period) {
-    lastBeep = now;
-    beep(2000, 120);
-  }
+  digitalWrite(PIN_BUZZER, LOW);
 }
 
 void drawScreen(unsigned long now) {

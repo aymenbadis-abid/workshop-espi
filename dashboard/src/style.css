@@ -100,6 +100,13 @@ li {
   color: var(--muted);
 }
 
+.waiting {
+  display: flex;
+  align-items: center;
+  min-height: 160px;
+  margin: 0;
+}
+
 .critical {
   color: var(--danger);
 }

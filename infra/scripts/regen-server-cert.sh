@@ -56,7 +56,7 @@ san_config="$(mktemp)"
 trap 'rm -f "$san_config"' EXIT
 
 cat >"$san_config" <<EOF
-subjectAltName = DNS:mosquitto,DNS:localhost,IP:127.0.0.1,IP:${SERVER_IP}
+subjectAltName = DNS:mosquitto,DNS:localhost,DNS:${SERVER_IP},IP:127.0.0.1,IP:${SERVER_IP}
 extendedKeyUsage = serverAuth
 keyUsage = digitalSignature,keyEncipherment
 basicConstraints = CA:FALSE

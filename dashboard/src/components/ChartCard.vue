@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Chart, LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Tooltip } from "chart.js";
 
 Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Tooltip);
@@ -20,15 +20,15 @@ function labelsOf(points) {
   );
 }
 
-onMounted(() => {
-  chart = new Chart(canvas.value, {
+function chartConfig(points) {
+  return {
     type: "line",
     data: {
-      labels: labelsOf(props.points),
+      labels: labelsOf(points),
       datasets: [
         {
           label: props.label,
-          data: props.points.map((point) => point.value),
+          data: points.map((point) => point.value),
           borderColor: props.color,
           backgroundColor: props.color + "33",
           fill: true,
@@ -46,16 +46,34 @@ onMounted(() => {
         y: { ticks: { color: "#93a4b8" } },
       },
     },
-  });
+  };
+}
+
+async function syncChart(points) {
+  if (!points.length) {
+    chart?.destroy();
+    chart = undefined;
+    return;
+  }
+  await nextTick();
+  if (!canvas.value) return;
+  if (!chart) {
+    chart = new Chart(canvas.value, chartConfig(points));
+    return;
+  }
+  chart.data.labels = labelsOf(points);
+  chart.data.datasets[0].data = points.map((point) => point.value);
+  chart.update("none");
+}
+
+onMounted(() => {
+  syncChart(props.points);
 });
 
 watch(
   () => props.points,
   (points) => {
-    if (!chart) return;
-    chart.data.labels = labelsOf(points);
-    chart.data.datasets[0].data = points.map((point) => point.value);
-    chart.update("none");
+    syncChart(points);
   },
   { deep: true },
 );
@@ -69,6 +87,7 @@ onBeforeUnmount(() => chart?.destroy());
       {{ label }}
       <span v-if="simulated" class="badge">simulé</span>
     </h2>
-    <canvas ref="canvas"></canvas>
+    <p v-if="points.length === 0" class="muted waiting">En attente de la carte ESP32</p>
+    <canvas v-else ref="canvas"></canvas>
   </section>
 </template>
