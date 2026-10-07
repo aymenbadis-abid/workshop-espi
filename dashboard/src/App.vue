@@ -3,12 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import ChartCard from "./components/ChartCard.vue";
 
 const MAX_POINTS = 60;
+const BOARD_ID = "esp32-01";
 const readings = ref([]);
 const alerts = ref([]);
 const status = ref(null);
 const connected = ref(false);
 const commandMessage = ref("");
-const focusDevice = ref(null);
 const videoUrl = "/video/stream";
 let socket;
 let pingTimer;
@@ -26,27 +26,13 @@ const series = computed(() => {
 const simulated = computed(() => new Set(readings.value.at(-1)?.simulated ?? []));
 
 const statusLabel = computed(() => {
-  if (!status.value) return "Aucun boîtier";
+  if (!status.value) return "En attente de la carte";
   return status.value.online ? "En ligne" : "Hors ligne";
 });
 
-function prefersBoard(current, incoming) {
-  if (!current) return incoming;
-  if (incoming?.device === "esp32-01") return incoming;
-  if (current.device === "esp32-01") return current;
-  return incoming;
-}
-
 function pushReading(row) {
-  if (row.device === "esp32-01" && focusDevice.value !== "esp32-01") {
-    focusDevice.value = "esp32-01";
-    readings.value = [row];
-    return;
-  }
-  if (!focusDevice.value) focusDevice.value = row.device;
-  if (row.device !== focusDevice.value) return;
-  const next = readings.value.concat(row);
-  readings.value = next.slice(-MAX_POINTS);
+  if (row.device !== BOARD_ID) return;
+  readings.value = readings.value.concat(row).slice(-MAX_POINTS);
 }
 
 async function loadInitial() {
@@ -57,14 +43,12 @@ async function loadInitial() {
   ]);
   if (telemetryRes.ok) {
     const rows = await telemetryRes.json();
-    const boardRows = rows.filter((row) => row.device === "esp32-01");
-    readings.value = boardRows.length ? boardRows : rows;
-    focusDevice.value = readings.value.at(-1)?.device ?? null;
+    readings.value = rows.filter((row) => row.device === BOARD_ID).slice(-MAX_POINTS);
   }
   if (alertsRes.ok) alerts.value = await alertsRes.json();
   if (statusRes.ok) {
     const rows = await statusRes.json();
-    status.value = rows.reduce((current, row) => prefersBoard(current, row), null);
+    status.value = rows.find((row) => row.device === BOARD_ID) ?? null;
   }
 }
 
@@ -85,7 +69,7 @@ function connect() {
       alerts.value = [message.data, ...alerts.value].slice(0, 20);
       if (message.data.type === "ack") commandMessage.value = message.data.message;
     }
-    if (message.kind === "status") status.value = prefersBoard(status.value, message.data);
+    if (message.kind === "status" && message.data?.device === BOARD_ID) status.value = message.data;
   };
 }
 
@@ -131,14 +115,14 @@ onBeforeUnmount(() => {
       <ChartCard label="Température (°C)" color="#3ddc97" :simulated="simulated.has('temp')" :points="series.temp" />
       <ChartCard label="Humidité (%)" color="#59b6f0" :simulated="simulated.has('hum')" :points="series.hum" />
       <ChartCard label="Gaz" color="#e6b35a" :simulated="simulated.has('gas')" :points="series.gas" />
-      <ChartCard label="Lumière" color="#d0d7e2" :simulated="simulated.has('light')" :points="series.light" />
+      <ChartCard label="Lumière" color="#d0d7e2" :simulated="false" :points="series.light" />
     </div>
     <div class="stack">
       <section class="panel">
         <h2>État du boîtier</h2>
         <p>{{ statusLabel }}</p>
         <p class="muted" v-if="status">{{ status.device }} · IP {{ status.ip || "inconnue" }} · uptime {{ status.uptime ?? "—" }} s</p>
-        <p class="muted" v-else>En attente du sujet status.</p>
+        <p class="muted" v-else>En attente de la carte ESP32.</p>
       </section>
       <section class="panel">
         <h2>Alertes</h2>
