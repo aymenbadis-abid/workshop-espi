@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 config.h
+secrets.h
 *.key
 *.p12
 *.pfx

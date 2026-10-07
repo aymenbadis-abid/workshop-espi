@@ -22,6 +22,7 @@ from app.modules.alerts.service import create_alert
 from app.modules.ml.service import score, should_emit
 from app.modules.telemetry.schemas import StatusIn, StatusOut, TelemetryIn, TelemetryOut
 from app.modules.telemetry.service import recent_device_window, record_telemetry, upsert_status
+from app.mqtt.payloads import classify_topic, normalize_telemetry, parse_ack, parse_plain_status
 
 logger = logging.getLogger(__name__)
 
@@ -42,27 +43,65 @@ def _normalize_alert(raw: dict) -> dict:
     return data
 
 
+def _bases() -> tuple[str, str]:
+    return settings.mqtt_topic_base, settings.mqtt_device_base
+
+
 async def _handle(topic: str, raw: dict) -> None:
-    base = settings.mqtt_topic_base.rstrip("/")
+    classified = classify_topic(topic, *_bases())
+    if classified is None:
+        logger.warning("Ignored MQTT topic %s", topic)
+        return
+    kind, device_hint = classified
     async with SessionLocal() as session:
-        if topic == f"{base}/telemetry":
-            payload = TelemetryIn.model_validate(raw)
+        if kind == "telemetry":
+            payload = TelemetryIn.model_validate(normalize_telemetry(raw, device_hint))
             row = await record_telemetry(session, payload)
             body = TelemetryOut.model_validate(row).model_dump(mode="json")
             await hub.broadcast({"kind": "telemetry", "data": body})
             await _score_window(session, payload.device)
-        elif topic == f"{base}/alerts":
+        elif kind == "alerts":
+            if device_hint and "device" not in raw:
+                raw = {**raw, "device": device_hint}
             payload = AlertCreate.model_validate(_normalize_alert(raw))
             row = await create_alert(session, payload, source="mqtt")
             body = AlertOut.model_validate(row).model_dump(mode="json")
             await hub.broadcast({"kind": "alert", "data": body})
-        elif topic == f"{base}/status":
+        elif kind == "status":
+            if device_hint and "device" not in raw:
+                raw = {**raw, "device": device_hint}
             payload = StatusIn.model_validate(raw)
             row = await upsert_status(session, payload)
             body = StatusOut.model_validate(row).model_dump(mode="json")
             await hub.broadcast({"kind": "status", "data": body})
-        else:
-            logger.warning("Ignored MQTT topic %s", topic)
+        elif kind == "ack":
+            logger.warning("Ack topic %s carried a JSON object, expected text", topic)
+
+
+async def _handle_text(topic: str, text: str) -> None:
+    classified = classify_topic(topic, *_bases())
+    if classified is None:
+        logger.warning("Ignored MQTT topic %s", topic)
+        return
+    kind, device_hint = classified
+    if kind == "ack":
+        if not device_hint:
+            logger.warning("Ack on %s has no device id", topic)
+            return
+        payload = AlertCreate.model_validate(parse_ack(text, device_hint))
+        async with SessionLocal() as session:
+            row = await create_alert(session, payload, source="mqtt")
+            body = AlertOut.model_validate(row).model_dump(mode="json")
+        await hub.broadcast({"kind": "alert", "data": body})
+        return
+    if kind == "status" and device_hint:
+        payload = StatusIn.model_validate(parse_plain_status(text, device_hint))
+        async with SessionLocal() as session:
+            row = await upsert_status(session, payload)
+            body = StatusOut.model_validate(row).model_dump(mode="json")
+        await hub.broadcast({"kind": "status", "data": body})
+        return
+    raise ValueError(f"Text payload is not valid on {topic}")
 
 
 async def _score_window(session, device: str) -> None:
@@ -85,7 +124,22 @@ async def _score_window(session, device: str) -> None:
 
 
 async def _consume_once() -> None:
-    base = settings.mqtt_topic_base.rstrip("/")
+    simulator_base = settings.mqtt_topic_base.rstrip("/")
+    device_base = settings.mqtt_device_base.rstrip("/")
+    topics = [
+        f"{simulator_base}/telemetry",
+        f"{simulator_base}/alerts",
+        f"{simulator_base}/status",
+    ]
+    if device_base != simulator_base:
+        topics.extend(
+            [
+                f"{device_base}/telemetry",
+                f"{device_base}/alerts",
+                f"{device_base}/status",
+                f"{device_base}/ack",
+            ]
+        )
     tls_params = aiomqtt.TLSParameters(
         ca_certs=settings.mqtt_ca_cert,
         tls_version=ssl.PROTOCOL_TLS_CLIENT,
@@ -99,16 +153,23 @@ async def _consume_once() -> None:
         tls_params=tls_params,
         tls_insecure=False,
     ) as client:
-        await client.subscribe(f"{base}/telemetry")
-        await client.subscribe(f"{base}/alerts")
-        await client.subscribe(f"{base}/status")
+        for topic in topics:
+            await client.subscribe(topic)
         logger.info("MQTT connected to %s:%s", settings.mqtt_host, settings.mqtt_port)
         async for message in client.messages:
             topic = _topic_name(message.topic)
+            payload = message.payload
+            if isinstance(payload, bytes):
+                text = payload.decode("utf-8", errors="replace")
+            else:
+                text = str(payload)
             try:
-                raw = json.loads(message.payload)
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                logger.warning("Invalid JSON on %s: %s", topic, exc)
+                raw = json.loads(text)
+            except json.JSONDecodeError:
+                try:
+                    await _handle_text(topic, text)
+                except (ValidationError, ValueError) as exc:
+                    logger.warning("Rejected text on %s: %s", topic, exc)
                 continue
             if not isinstance(raw, dict):
                 logger.warning("JSON on %s is not an object", topic)

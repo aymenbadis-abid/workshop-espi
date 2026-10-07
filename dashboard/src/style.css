@@ -104,6 +104,14 @@ li {
   color: var(--danger);
 }
 
+.warning {
+  color: var(--warn);
+}
+
+.info {
+  color: var(--muted);
+}
+
 .video {
   display: block;
   width: 100%;

@@ -1,10 +1,22 @@
 # Contrat MQTT Sentinel-X
 
-Le boîtier et le simulateur Python parlent le même JSON. L’API ne fait pas confiance à un autre format. Les identifiants vivent dans `.env`, jamais dans Git.
+Le simulateur Python parle le JSON ci-dessous. La carte ESP32 publie le même JSON de mesures, et reçoit ses commandes en texte simple. Les identifiants vivent dans `.env`, jamais dans Git.
 
 ## Sujets
 
-Base fixe : `sentinelx/g6`.
+Deux bases. Le simulateur Python reste sur `sentinelx/g6`. La carte ESP32 utilise `sentinelx/esp32-01` (compte MQTT `esp01`, comme le simulateur).
+
+| Sujet | Direction | Rôle |
+|---|---|---|
+| `sentinelx/esp32-01/telemetry` | carte → serveur | mesures, toutes les 5 s, et tout de suite si la lumière change |
+| `sentinelx/esp32-01/status` | carte → serveur | `online` / `offline`, message retenu, IP et uptime |
+| `sentinelx/esp32-01/cmd` | serveur → carte | texte : `led_red:1`, `led_green:0`, `buzzer:0`, `auto`, `scenario:drift` |
+| `sentinelx/esp32-01/ack` | carte → serveur | `ok:<cmd>` ou `erreur:<cmd>` |
+| `sentinelx/esp32-01/alerts` | carte → serveur | sabotage lumière, pic de gaz |
+
+Le dashboard envoie ces textes. Les LED et les scénarios sont aussi publiés en JSON sur `sentinelx/g6/cmd`, pour le simulateur.
+
+Base du simulateur : `sentinelx/g6`.
 
 | Sujet | Direction | Rôle |
 |---|---|---|
@@ -27,7 +39,7 @@ Base fixe : `sentinelx/g6`.
 }
 ```
 
-`ts` est un horodatage Unix en secondes. `simulated` liste les voies qui ne viennent pas d’un capteur réel. La lumière est réelle sur la carte (photorésistance sur A0) : elle n’est pas dans `simulated`.
+`ts` est un horodatage Unix en secondes. `simulated` liste les voies qui ne viennent pas d’un capteur réel. Sur la carte, la lumière (GPIO 34) et le DHT22 (température, humidité, GPIO 32) sont réels. Le gaz reste simulé. Un message qui nomme les mesures `temperature` et `humidity`, ou qui n’a que `light_dark`, est encore accepté. `null` sur le DHT veut dire que la lecture a échoué : ces voies sont alors marquées simulées.
 
 ## Alerte
 
@@ -58,6 +70,10 @@ Le testament MQTT publie le même objet avec `"online": false`, en message reten
 
 ## Commandes
 
+Vers la carte, le texte exact est `led_red:1`, `led_green:0`, `buzzer:1`, `buzzer:0` ou `auto`. Un scénario part comme `scenario:normal`, `scenario:drift`, `scenario:gas_leak` ou `scenario:reset`. La carte répond `ok:` ou `erreur:` suivi de la commande.
+
+Le simulateur, lui, reçoit le JSON suivant sur `sentinelx/g6/cmd`.
+
 LED :
 
 ```json
@@ -83,8 +99,8 @@ Valeurs : `normal`, `drift`, `gas_leak`, `reset`.
 
 Deux comptes, créés au démarrage de Mosquitto à partir de `.env` :
 
-- `MQTT_USERNAME` (exemple `esp01`) : publie `telemetry`, `alerts`, `status` ; s’abonne à `cmd`. Le simulateur utilise ce compte.
-- `MQTT_API_USERNAME` (exemple `api`) : lit ces trois sujets et publie `cmd`. Il ne publie pas de télémétrie.
+- `MQTT_USERNAME` (exemple `esp01`) : publie télémétrie, alertes, statut et ack ; s’abonne aux commandes. Le simulateur et la carte utilisent ce compte.
+- `MQTT_API_USERNAME` (exemple `api`) : lit ces sujets et publie les commandes. Il ne publie pas de télémétrie.
 
 Le port de production est **8883** (MQTTS). Le port 1883 n’est pas publié par défaut. Pour l’ouvrir le temps d’un essai : `MQTT_ALLOW_PLAINTEXT=true` dans `.env`, puis :
 
@@ -101,9 +117,9 @@ L’IP du laptop change avec le partage de connexion du téléphone. Elle est lu
 1. crée l’autorité `infra/certs/ca.crt` une seule fois ;
 2. régénère seulement le certificat du serveur, avec cette IP dans le SAN, plus `mosquitto`, `localhost` et `127.0.0.1`.
 
-Relancer le script ne remplace pas l’autorité. La carte, qui ne stocke que `ca.crt`, n’a pas à être reflasher pour faire confiance au nouveau certificat serveur.
+Relancer le script ne remplace pas l’autorité. La carte embarque cette autorité dans `firmware/include/ca_cert.h`. Un nouveau certificat serveur, signé par la même autorité, ne demande pas de recompiler la carte. L’adresse dans `config.h` (`MQTT_HOST`) doit être celle du SAN, donc la même que `SERVER_IP`.
 
-Fichiers locaux, ignorés par Git : `ca.key`, `server.key`, `server.crt`. Seul `ca.crt` peut être versionné. Le collègue firmware le copiera au moment du flash. Ne pas le déposer dans `firmware/` tant que cette branche n’est pas à lui.
+Fichiers locaux, ignorés par Git : `ca.key`, `server.key`, `server.crt`, `firmware/include/config.h`. Seul `ca.crt` (et sa copie dans le firmware) peut être versionné.
 
 ## Essai local
 
