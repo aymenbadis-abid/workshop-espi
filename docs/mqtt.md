@@ -39,7 +39,7 @@ Base du simulateur : `sentinelx/g6`.
 }
 ```
 
-`ts` est un horodatage Unix en secondes. `simulated` liste les voies qui ne viennent pas d’un capteur réel. La lumière est réelle sur la carte (GPIO 34) : elle n’est pas dans `simulated`. Un ancien message qui n’a que `light_dark` est encore accepté.
+`ts` est un horodatage Unix en secondes. `simulated` liste les voies qui ne viennent pas d’un capteur réel. Sur la carte, la lumière (GPIO 34) et le DHT22 (température, humidité, GPIO 32) sont réels. Le gaz reste simulé. Un message qui nomme les mesures `temperature` et `humidity`, ou qui n’a que `light_dark`, est encore accepté. `null` sur le DHT veut dire que la lecture a échoué : ces voies sont alors marquées simulées.
 
 ## Alerte
 

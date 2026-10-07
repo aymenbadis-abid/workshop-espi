@@ -33,12 +33,27 @@ def classify_topic(topic: str, simulator_base: str, device_base: str) -> tuple[s
     return None
 
 
+def _number_or_none(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() in {"", "null", "nan"}:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:
+        return None
+    return number
+
+
 def normalize_telemetry(raw: dict, device_hint: str | None = None) -> dict:
     """Fill the fields the dashboard stores when the board omits them.
 
     A payload that already matches the simulator contract is returned unchanged
-    apart from numeric coercion. light_dark without light becomes a chart value.
-    Missing temp, hum, or gas are neutral baselines and marked simulated.
+    apart from numeric coercion. The DHT22 sketch names the same readings
+    temperature and humidity. light_dark without light becomes a chart value.
+    A missing or null channel gets a neutral baseline and is marked simulated.
     """
     data = dict(raw)
     if device_hint and not data.get("device"):
@@ -47,6 +62,15 @@ def normalize_telemetry(raw: dict, device_hint: str | None = None) -> dict:
         data["ts"] = int(time.time())
     else:
         data["ts"] = int(data["ts"])
+
+    if "temp" not in data:
+        parsed = _number_or_none(data.get("temperature"))
+        if parsed is not None:
+            data["temp"] = parsed
+    if "hum" not in data:
+        parsed = _number_or_none(data.get("humidity"))
+        if parsed is not None:
+            data["hum"] = parsed
 
     invented: list[str] = []
     if "light" not in data and "light_dark" in data:

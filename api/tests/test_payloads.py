@@ -43,6 +43,39 @@ def test_original_board_telemetry_becomes_storable() -> None:
     assert "ts" in out
 
 
+def test_dht_telemetry_keeps_real_temperature_and_humidity() -> None:
+    raw = {
+        "device": "esp32-01",
+        "uptime_s": 255,
+        "temperature": 26.7,
+        "humidity": 48.9,
+        "light_dark": 0,
+        "transitions_1min": 0,
+        "alert_heat": 0,
+        "status": "NORMAL",
+        "manual": 0,
+        "rssi": -50,
+    }
+    out = normalize_telemetry(raw, "esp32-01")
+    assert out["temp"] == 26.7
+    assert out["hum"] == 48.9
+    assert out["light"] == 640.0
+    assert out["gas"] == 300.0
+    assert out["simulated"] == ["gas"]
+
+
+def test_missing_dht_reading_is_marked_simulated() -> None:
+    raw = {
+        "device": "esp32-01",
+        "temperature": None,
+        "humidity": None,
+        "light_dark": 1,
+    }
+    out = normalize_telemetry(raw, "esp32-01")
+    assert out["light"] == 80.0
+    assert out["simulated"] == ["temp", "hum", "gas"]
+
+
 def test_full_contract_is_not_rewritten() -> None:
     raw = {
         "device": "esp32-01",
@@ -78,6 +111,8 @@ def test_command_text_matches_the_board() -> None:
 if __name__ == "__main__":
     test_classify_keeps_simulator_and_board_apart()
     test_original_board_telemetry_becomes_storable()
+    test_dht_telemetry_keeps_real_temperature_and_humidity()
+    test_missing_dht_reading_is_marked_simulated()
     test_full_contract_is_not_rewritten()
     test_status_and_ack_text()
     test_command_text_matches_the_board()

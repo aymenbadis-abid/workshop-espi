@@ -15,7 +15,8 @@ Le firmware de la carte vit à part, dans `firmware/`.
 Réel :
 
 - ESP32 (`esp32-01`) : WiFi, NTP, TLS, MQTTS
-- Lumière : capteur sur GPIO 34
+- Lumière : module LM393, sortie numérique sur GPIO 34
+- Température et humidité : DHT22 sur GPIO 32
 - LED rouge (GPIO 27) et LED verte (GPIO 26), chacune avec une résistance 220 Ω
 - Buzzer sur GPIO 25
 - Écran OLED SSD1306 128×64, I2C `0x3C` (SDA = GPIO 21, SCL = GPIO 22), alimenté en 3,3 V
@@ -23,7 +24,7 @@ Réel :
 
 Simulé dans le firmware (champ `simulated`) :
 
-- Température, humidité, gaz / fumée
+- Gaz / fumée (le MQ-2 n’est pas branché)
 - La détection de personne ne passe pas par la carte : elle est faite par la caméra du serveur
 
 La télémétrie listera les voies simulées dans le champ `simulated`. Le dashboard affichera un badge « simulé » sur ces courbes.

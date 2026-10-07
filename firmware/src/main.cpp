@@ -1,6 +1,7 @@
 // Sentinel-X ESP32 firmware.
 // Telemetry, retained status (with Last Will), plain commands, and ack.
-// Temperature, humidity, and gas are simulated. Light is the real sensor.
+// Light is the LM393 module. Temperature and humidity come from the DHT22.
+// Gas stays simulated: the MQ-2 is not wired yet.
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -18,12 +19,28 @@
 #endif
 #include "ca_cert.h"
 
+#ifndef USE_DHT
+#define USE_DHT 1
+#endif
+#if USE_DHT
+#include <DHT.h>
+#endif
+
 #define PIN_SDA 21
 #define PIN_SCL 22
 #define PIN_LIGHT 34
+#define PIN_DHT 32
 #define PIN_BUZZER 25
 #define PIN_LED_G 26
 #define PIN_LED_R 27
+#define DHT_TYPE DHT22
+#define DHT_PERIOD_MS 2000
+// Server inlet air. ASHRAE recommended range ends near 27 C.
+// 35 C is outside that envelope: equipment throttles and the room is in danger.
+#define TEMP_WARN_C 27.0f
+#define TEMP_WARN_CLEAR_C 25.0f
+#define TEMP_DANGER_C 35.0f
+#define TEMP_DANGER_CLEAR_C 33.0f
 
 #define READ_PERIOD_MS 200
 #define STABLE_READS 3
@@ -40,9 +57,16 @@
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 WiFiClientSecure netClient;
 PubSubClient mqtt(netClient);
+#if USE_DHT
+DHT dht(PIN_DHT, DHT_TYPE);
+#endif
 bool displayReady = false;
 
 bool isDark = false;
+enum HeatLevel { HEAT_OK = 0, HEAT_WARN = 1, HEAT_DANGER = 2 };
+HeatLevel heat = HEAT_OK;
+float temperature = NAN;
+float humidity = NAN;
 int candidate = -1;
 int candidateCount = 0;
 int lightValue = 0;
@@ -53,6 +77,7 @@ unsigned long lastSend = 0;
 unsigned long lastBeep = 0;
 unsigned long lastWifiTry = 0;
 unsigned long lastMqttTry = 0;
+unsigned long lastDht = 0;
 bool sendNow = false;
 
 // Manual override: -1 follows the light, 0 forced off, 1 forced on.
@@ -95,13 +120,30 @@ bool clockReady() {
   return time(nullptr) > 1700000000;
 }
 
-int readLight() {
-  int raw = analogRead(PIN_LIGHT);
-  int scaled = raw * 1023 / 4095;
-  if (LIGHT_INVERT) scaled = 1023 - scaled;
-  if (scaled < 0) scaled = 0;
-  if (scaled > 1023) scaled = 1023;
-  return scaled;
+bool alarmActive() { return isDark || heat != HEAT_OK; }
+
+HeatLevel nextHeatLevel(float temp) {
+  if (heat == HEAT_OK) {
+    if (temp >= TEMP_DANGER_C) return HEAT_DANGER;
+    if (temp >= TEMP_WARN_C) return HEAT_WARN;
+    return HEAT_OK;
+  }
+  if (heat == HEAT_WARN) {
+    if (temp >= TEMP_DANGER_C) return HEAT_DANGER;
+    if (temp <= TEMP_WARN_CLEAR_C) return HEAT_OK;
+    return HEAT_WARN;
+  }
+  if (temp <= TEMP_DANGER_CLEAR_C) {
+    if (temp <= TEMP_WARN_CLEAR_C) return HEAT_OK;
+    return HEAT_WARN;
+  }
+  return HEAT_DANGER;
+}
+
+int readLightLevel() {
+  bool dark = digitalRead(PIN_LIGHT) == HIGH;
+  if (LIGHT_INVERT) dark = !dark;
+  return dark ? 1 : 0;
 }
 
 void publishAlert(const char *type, const char *message, const char *severity) {
@@ -258,8 +300,8 @@ void mqttLoop(unsigned long now) {
 }
 
 void readSensor(unsigned long now) {
-  lightValue = readLight();
-  int dark = lightValue < LIGHT_DARK_BELOW ? 1 : 0;
+  int dark = readLightLevel();
+  lightValue = dark ? 80 : 640;
   if (dark == candidate) candidateCount++;
   else {
     candidate = dark;
@@ -274,13 +316,46 @@ void readSensor(unsigned long now) {
   }
 }
 
+void readDht(unsigned long now) {
+#if USE_DHT
+  if (now - lastDht < DHT_PERIOD_MS) return;
+  lastDht = now;
+  float nextTemp = dht.readTemperature();
+  float nextHum = dht.readHumidity();
+  if (isnan(nextTemp) || isnan(nextHum)) {
+    temperature = NAN;
+    humidity = NAN;
+    Serial.println("[DHT] read failed");
+    return;
+  }
+  temperature = nextTemp;
+  humidity = nextHum;
+  HeatLevel next = nextHeatLevel(nextTemp);
+  if (next == heat) return;
+  heat = next;
+  sendNow = true;
+  if (heat == HEAT_DANGER) {
+    Serial.println("[EVENT] heat danger");
+    publishAlert("heat", "Température critique : salle serveurs", "critical");
+  } else if (heat == HEAT_WARN) {
+    Serial.println("[EVENT] heat warning");
+    publishAlert("heat", "Température élevée : salle serveurs", "warning");
+  } else {
+    Serial.println("[EVENT] temperature ok");
+    publishAlert("heat", "Température revenue à la normale", "info");
+  }
+#endif
+}
+
 void updateOutputs(unsigned long now) {
-  bool red = (ovRed == -1) ? isDark : (ovRed == 1);
-  bool green = (ovGreen == -1) ? !isDark : (ovGreen == 1);
-  bool buzzer = (ovBuzzer == -1) ? isDark : (ovBuzzer == 1);
+  bool alarm = alarmActive();
+  bool red = (ovRed == -1) ? alarm : (ovRed == 1);
+  bool green = (ovGreen == -1) ? !alarm : (ovGreen == 1);
+  bool buzzer = (ovBuzzer == -1) ? alarm : (ovBuzzer == 1);
   digitalWrite(PIN_LED_R, red ? HIGH : LOW);
   digitalWrite(PIN_LED_G, green ? HIGH : LOW);
-  unsigned long period = (ovBuzzer == 1) ? 800 : 2000;
+  bool danger = ovBuzzer == -1 && heat == HEAT_DANGER;
+  unsigned long period = (ovBuzzer == 1 || danger) ? 800 : 2000;
   if (buzzer && now - lastBeep > period) {
     lastBeep = now;
     beep(2000, 120);
@@ -301,16 +376,26 @@ void drawScreen(unsigned long now) {
   }
   display.setTextSize(2);
   display.setCursor(0, 12);
-  display.println(isDark ? "ALERTE" : "NORMAL");
+  display.println(alarmActive() ? "ALERTE" : "NORMAL");
   display.setTextSize(1);
   display.setCursor(0, 32);
-  display.print("Lumiere: ");
-  display.println(lightValue);
-  display.print("Chgts/min: ");
+  if (isnan(temperature)) display.println("T: --  H: --");
+  else {
+    display.print("T:");
+    display.print(temperature, 1);
+    display.print("C H:");
+    display.print(humidity, 0);
+    display.println("%");
+  }
+  display.print("Lum: ");
+  display.print(isDark ? "SOMBRE" : "CLAIRE");
+  display.print(" chg:");
   display.println(transitionsLastMinute(now));
   display.print("MQTT: ");
   display.print(mqtt.connected() ? "OK" : "KO");
-  if (ovRed != -1 || ovGreen != -1 || ovBuzzer != -1) display.print("  MANUEL");
+  if (heat == HEAT_DANGER) display.print(" DANGER");
+  else if (heat == HEAT_WARN) display.print(" CHAUD");
+  if (ovRed != -1 || ovGreen != -1 || ovBuzzer != -1) display.print(" MAN");
   display.print("  ");
   if (scenario == SC_DRIFT) display.print("derive");
   else if (scenario == SC_GAS) display.print("gaz");
@@ -321,17 +406,32 @@ void sendData(unsigned long now, float dt) {
   if (!mqtt.connected() || !clockReady()) return;
   if (dt < 0.2f) dt = 0.2f;
   if (dt > 30.0f) dt = 30.0f;
-  float temp, hum, gas;
-  sampleSimulated(dt, &temp, &hum, &gas);
+  float simTemp, simHum, gas;
+  sampleSimulated(dt, &simTemp, &simHum, &gas);
+  bool tempReal = !isnan(temperature);
+  bool humReal = !isnan(humidity);
+  float temp = tempReal ? temperature : simTemp;
+  float hum = humReal ? humidity : simHum;
   bool manual = ovRed != -1 || ovGreen != -1 || ovBuzzer != -1;
   int rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
-  char json[384];
+  char simulated[48] = "\"gas\"";
+  if (!tempReal && !humReal) snprintf(simulated, sizeof(simulated), "\"temp\",\"hum\",\"gas\"");
+  else if (!tempReal) snprintf(simulated, sizeof(simulated), "\"temp\",\"gas\"");
+  else if (!humReal) snprintf(simulated, sizeof(simulated), "\"hum\",\"gas\"");
+  char tempField[16];
+  char humField[16];
+  if (tempReal) snprintf(tempField, sizeof(tempField), "%.1f", temperature);
+  else snprintf(tempField, sizeof(tempField), "null");
+  if (humReal) snprintf(humField, sizeof(humField), "%.1f", humidity);
+  else snprintf(humField, sizeof(humField), "null");
+  char json[480];
   snprintf(json, sizeof(json),
            "{\"device\":\"%s\",\"ts\":%lu,\"temp\":%.2f,\"hum\":%.2f,\"gas\":%.1f,\"light\":%d,"
-           "\"simulated\":[\"temp\",\"hum\",\"gas\"],\"light_dark\":%d,\"transitions_1min\":%d,"
-           "\"manual\":%d,\"rssi\":%d}",
-           DEVICE_ID, (unsigned long)time(nullptr), temp, hum, gas, lightValue,
-           isDark ? 1 : 0, transitionsLastMinute(now), manual ? 1 : 0, rssi);
+           "\"simulated\":[%s],\"temperature\":%s,\"humidity\":%s,\"light_dark\":%d,"
+           "\"transitions_1min\":%d,\"alert_heat\":%d,\"manual\":%d,\"rssi\":%d}",
+           DEVICE_ID, (unsigned long)time(nullptr), temp, hum, gas, lightValue, simulated,
+           tempField, humField, isDark ? 1 : 0, transitionsLastMinute(now), (int)heat,
+           manual ? 1 : 0, rssi);
   Serial.println(json);
   mqtt.publish(T_TELEMETRY, json);
   publishStatus(true);
@@ -343,8 +443,9 @@ void setup() {
   pinMode(PIN_LED_R, OUTPUT);
   pinMode(PIN_BUZZER, OUTPUT);
   pinMode(PIN_LIGHT, INPUT);
-  analogReadResolution(12);
-  analogSetPinAttenuation(PIN_LIGHT, ADC_11db);
+#if USE_DHT
+  dht.begin();
+#endif
 
   Wire.begin(PIN_SDA, PIN_SCL);
   displayReady = display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
@@ -370,6 +471,7 @@ void loop() {
   if (now - lastRead >= READ_PERIOD_MS) {
     lastRead = now;
     readSensor(now);
+    readDht(now);
     updateOutputs(now);
     drawScreen(now);
   }

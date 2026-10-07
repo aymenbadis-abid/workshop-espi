@@ -15,7 +15,9 @@
 
 #define DEVICE_ID "esp32-01"
 
-// Light is scaled to 0..1023. A reading below this means the box is covered.
-// Set LIGHT_INVERT to 1 if covering the sensor makes the raw value rise.
-#define LIGHT_DARK_BELOW 250
+// 1 = DHT22 on GPIO 32. 0 = no temperature sensor, temp and humidity stay simulated.
+#define USE_DHT 1
+
+// LM393 digital output on GPIO 34. Covering the sensor reads HIGH.
+// Set LIGHT_INVERT to 1 if the module marks darkness as LOW.
 #define LIGHT_INVERT 0
