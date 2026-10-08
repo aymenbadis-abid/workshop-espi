@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     room_hum_model_path: str | None = None
     room_couple_model_path: str | None = None
     api_cors_origins: str = "http://localhost:5173,http://127.0.0.1:8080"
+    jwt_secret: str
+    jwt_algorithm: str = "HS256"
+    admin_email: str
+    admin_password: str
+    vision_token: str
 
     def _model_file(self, override: str | None, filename: str) -> Path:
         if override:

@@ -59,6 +59,11 @@ services:
       MQTT_DEVICE_BASE: ${MQTT_DEVICE_BASE:-sentinelx/esp32-01}
       MQTT_CA_CERT: /certs/ca.crt
       API_CORS_ORIGINS: http://127.0.0.1:8080,http://localhost:5173
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      VISION_TOKEN: ${VISION_TOKEN}
     volumes:
       - ./infra/certs/ca.crt:/certs/ca.crt:ro
     ports:

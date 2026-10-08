@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
 from app.core.hub import hub
+from app.modules.auth.deps import require_user
+from app.modules.auth.service import decode_access_token
 from app.modules.telemetry.schemas import StatusOut, TelemetryOut
 from app.modules.telemetry.service import list_status, list_telemetry
 
@@ -26,6 +28,7 @@ router = APIRouter()
 async def read_telemetry(
     limit: int = Query(default=60, ge=1, le=500),
     session: AsyncSession = Depends(get_session),
+    _user: dict = Depends(require_user),
 ) -> list[TelemetryOut]:
     rows = await list_telemetry(session, limit)
     return [TelemetryOut.model_validate(row) for row in rows]
@@ -41,7 +44,10 @@ async def read_telemetry(
         "Les mises à jour arrivent sur /api/v1/ws, événement kind=status."
     ),
 )
-async def read_status(session: AsyncSession = Depends(get_session)) -> list[StatusOut]:
+async def read_status(
+    session: AsyncSession = Depends(get_session),
+    _user: dict = Depends(require_user),
+) -> list[StatusOut]:
     rows = await list_status(session)
     return [StatusOut.model_validate(row) for row in rows]
 
@@ -49,6 +55,10 @@ async def read_status(session: AsyncSession = Depends(get_session)) -> list[Stat
 @router.websocket("/ws")
 async def live_events(websocket: WebSocket) -> None:
     """Push telemetry, alert and status events as JSON objects with a kind field."""
+    payload = decode_access_token(websocket.query_params.get("token") or "")
+    if payload is None:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
     await websocket.accept()
     hub.add(websocket)
     try:

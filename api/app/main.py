@@ -9,6 +9,8 @@ from app.core.config import settings
 from app.core.database import engine, ensure_schema
 from app.modules.alerts import models as alert_models  # noqa: F401
 from app.modules.alerts.router import router as alerts_router
+from app.modules.auth.router import router as auth_router
+from app.modules.auth.service import seed_admin
 from app.modules.commands.router import router as commands_router
 from app.modules.ml.router import router as ml_router
 from app.modules.ml.service import load_model
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await ensure_schema()
+    await seed_admin()
     load_model()
     task = asyncio.create_task(mqtt_loop())
     logger.info("API ready")
@@ -42,7 +45,7 @@ app = FastAPI(
         "L'API stocke la télémétrie et les alertes du boîtier (ou du simulateur) "
         "et expose POST /api/v1/alerts pour les événements produits sur le serveur, "
         "notamment la détection de personne. "
-        "L'authentification JWT sera branchée avant la soutenance."
+        "L'écran exige un compte admin (POST /api/v1/auth/login). "
     ),
     version="0.1.0",
     lifespan=lifespan,
@@ -56,6 +59,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router, prefix="/api/v1")
 app.include_router(telemetry_router, prefix="/api/v1")
 app.include_router(alerts_router, prefix="/api/v1")
 app.include_router(commands_router, prefix="/api/v1")

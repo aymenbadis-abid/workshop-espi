@@ -159,6 +159,11 @@ test("les mesures se recollent par id, de la plus ancienne à la plus récente",
   assert.equal(merged[1].temp, 29);
 });
 
+test("la connexion n'invente pas de conseil", () => {
+  const blob = "Un compte admin est exigé pour lire la salle. Identifiants refusés";
+  assert.equal(/devriez|aérez|aérer|appelez|éteignez/i.test(blob), false);
+});
+
 test("aucune phrase de conseil dans les libellés fixes", () => {
   const blob = `${TEMP_LIMIT_CAPTION} ${frenchAck({ message: "Commande acceptée : auto" })}`;
   assert.equal(/devriez|aérez|aérer|appelez|éteignez/i.test(blob), false);
