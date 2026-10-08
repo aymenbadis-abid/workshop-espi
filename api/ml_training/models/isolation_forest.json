@@ -1,0 +1,26 @@
+{
+  "version": "simulator-couple-1",
+  "name": "forêt d'isolation",
+  "algorithm": "isolation_forest",
+  "trained_on": "simulator",
+  "scenario": "normal",
+  "step_s": 3.0,
+  "window": 30,
+  "channels": [
+    "temp",
+    "gas"
+  ],
+  "feature_names": [
+    "temp_slope",
+    "gas_slope",
+    "temp_mean",
+    "temp_std",
+    "gas_mean",
+    "gas_std",
+    "temp_gas_corr"
+  ],
+  "normal_anomaly_rate": 0.0128,
+  "drift_anomaly_rate": 1.0,
+  "created_at": "2026-10-08T07:56:20+00:00",
+  "summary": "Forêt d'isolation du scénario normal du simulateur (pièce fictive vers 24 °C, gaz vers 300, pas de 3 s). Elle ne juge pas un gaz réel."
+}

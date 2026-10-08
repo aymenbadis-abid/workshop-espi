@@ -10,7 +10,7 @@ Le sketch v3 d’Abdessamad est intégré ici, avec le MQTTS du serveur. Les bro
 - LED verte : GPIO 26, même câblage
 - Buzzer : GPIO 25
 
-Le bouton « Dérive » du dashboard ne change que le gaz simulé, et seulement si `USE_GAS` vaut 0. Avec le capteur branché, la courbe de gaz est la mesure lissée (0 à 4095). La chaleur réelle a deux paliers, ceux d’une salle de serveurs : avertissement dès 27 °C (retour sous 25 °C), danger dès 35 °C (retour sous 33 °C). Le buzzer reste coupé dans ce firmware.
+Le bouton « Dérive » du dashboard ne change que le gaz simulé, et seulement si `USE_GAS` vaut 0. Avec le capteur branché, la courbe de gaz est la mesure lissée (0 à 4095). La chaleur réelle a deux paliers, ceux d’une salle de serveurs : avertissement dès 27 °C (retour sous 25 °C), danger dès 33 °C (retour sous 31 °C). Le buzzer est un piézo : une note de 2 kHz. En auto, le danger (33 °C) bipe fort, l'avertissement (27 °C, gaz ou obscurité) bipe plus doucement. `buzzer:1` force le bip fort, `buzzer:0` coupe, `auto` rend la main à la carte.
 
 ## Sujets
 

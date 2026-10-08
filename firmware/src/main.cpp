@@ -46,12 +46,11 @@
 #define GAS_ALERT_DELTA 400
 #define GAS_CLEAR_DELTA 250
 #define GAS_SMOOTH 0.1f
-// Server inlet air. ASHRAE recommended range ends near 27 C.
-// 35 C is outside that envelope: equipment throttles and the room is in danger.
+// Server inlet air. Warning starts at 27 C. Danger starts at 33 C.
 #define TEMP_WARN_C 27.0f
 #define TEMP_WARN_CLEAR_C 25.0f
-#define TEMP_DANGER_C 35.0f
-#define TEMP_DANGER_CLEAR_C 33.0f
+#define TEMP_DANGER_C 33.0f
+#define TEMP_DANGER_CLEAR_C 31.0f
 
 #define READ_PERIOD_MS 200
 // Used only if the hotspot blocks NTP. Must stay after the broker certificate notBefore.
@@ -59,7 +58,9 @@
 #define BUILD_EPOCH 1791365334L
 #endif
 #define STABLE_READS 3
-#define SEND_PERIOD_MS 5000
+// DHT updates every 2 s. Publish at that pace so the screen follows the sensor.
+// The server keeps a 5 s grid for the room models.
+#define SEND_PERIOD_MS 2000
 #define WINDOW_MS 60000UL
 #define MAX_EVENTS 40
 
@@ -98,10 +99,12 @@ unsigned long lastMqttTry = 0;
 unsigned long lastDht = 0;
 bool sendNow = false;
 
-// Manual override: -1 follows the light, 0 forced off, 1 forced on.
+// LEDs: -1 follows the alarm, 0 forced off, 1 forced on.
+// Buzzer: -1 follows the room, 0 forced silent, 1 forced strong beep.
 int ovRed = -1;
 int ovGreen = -1;
 int ovBuzzer = -1;
+unsigned long lastBeep = 0;
 
 enum Scenario { SC_NORMAL, SC_DRIFT, SC_GAS };
 Scenario scenario = SC_NORMAL;
@@ -419,13 +422,48 @@ void readGas(unsigned long now) {
 #endif
 }
 
+// Passive piezo: a steady level only clicks. A square wave is the beep.
+void beep(int freq, int ms) {
+  long period = 1000000L / freq;
+  long cycles = (long)ms * 1000L / period;
+  for (long i = 0; i < cycles; i++) {
+    digitalWrite(PIN_BUZZER, HIGH);
+    delayMicroseconds(period / 2);
+    digitalWrite(PIN_BUZZER, LOW);
+    delayMicroseconds(period / 2);
+  }
+}
+
 void updateOutputs(unsigned long now) {
   bool alarm = alarmActive();
   bool red = (ovRed == -1) ? alarm : (ovRed == 1);
   bool green = (ovGreen == -1) ? !alarm : (ovGreen == 1);
   digitalWrite(PIN_LED_R, red ? HIGH : LOW);
   digitalWrite(PIN_LED_G, green ? HIGH : LOW);
-  digitalWrite(PIN_BUZZER, LOW);
+
+  bool strong = false;
+  bool weak = false;
+  if (ovBuzzer == 0) {
+    digitalWrite(PIN_BUZZER, LOW);
+    return;
+  }
+  if (ovBuzzer == 1) {
+    strong = true;
+  } else if (heat == HEAT_DANGER) {
+    strong = true;
+  } else if (heat == HEAT_WARN || isGas || isDark) {
+    weak = true;
+  }
+  if (!strong && !weak) {
+    digitalWrite(PIN_BUZZER, LOW);
+    return;
+  }
+  // Danger: longer tone, close together. Warning: shorter tone, further apart.
+  unsigned long period = strong ? 800 : 2000;
+  int length = strong ? 160 : 70;
+  if (now - lastBeep < period) return;
+  lastBeep = now;
+  beep(2000, length);
 }
 
 void drawScreen(unsigned long now) {

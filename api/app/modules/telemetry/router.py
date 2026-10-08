@@ -16,7 +16,10 @@ router = APIRouter()
     description=(
         "Retourne les mesures stockées, de la plus ancienne à la plus récente "
         "dans la fenêtre demandée. Le champ simulated indique les voies produites "
-        "par le moteur de scénarios et non par un capteur. Les nouvelles mesures "
+        "par le moteur de scénarios et non par un capteur. Les faits de la carte "
+        "(gas_ready, gas_delta, gas_raw, alert_heat, alert_gas, light_dark, "
+        "transitions_1min, manual, rssi) sont renvoyés tels quels : une clé absente "
+        "reste nulle, ce n'est pas un préchauffage inventé. Les nouvelles mesures "
         "arrivent aussi sur le WebSocket /api/v1/ws, événement kind=telemetry."
     ),
 )
