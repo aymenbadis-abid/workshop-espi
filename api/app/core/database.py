@@ -18,6 +18,7 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 async def ensure_schema() -> None:
     """Create missing tables, then add board-fact columns on an existing telemetry table."""
     from app.modules.alerts import models as alert_models  # noqa: F401
+    from app.modules.auth import models as auth_models  # noqa: F401
     from app.modules.telemetry import models as telemetry_models  # noqa: F401
     from app.modules.telemetry.models import BOARD_FACT_COLUMNS
 

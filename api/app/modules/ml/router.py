@@ -1,5 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.modules.auth.deps import require_user
 from app.modules.ml.schemas import ScoringOut
 from app.modules.ml.service import scoring_snapshot
 
@@ -21,5 +22,5 @@ router = APIRouter()
         "Les mêmes champs partent sur le WebSocket, événement kind=scoring."
     ),
 )
-async def read_scoring() -> ScoringOut:
+async def read_scoring(_user: dict = Depends(require_user)) -> ScoringOut:
     return ScoringOut.model_validate(scoring_snapshot())

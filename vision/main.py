@@ -96,6 +96,10 @@ def load_env(path: Path) -> None:
 
 
 def post_alert(api_url: str, message: str, kind: str, track_id: int) -> None:
+    headers = {}
+    token = os.environ.get("VISION_TOKEN")
+    if token:
+        headers["X-Vision-Token"] = token
     response = requests.post(
         f"{api_url.rstrip('/')}/api/v1/alerts",
         json={
@@ -105,6 +109,7 @@ def post_alert(api_url: str, message: str, kind: str, track_id: int) -> None:
             "severity": "warning",
             "payload": {"model": "YOLOv8n", "event": kind, "track_id": track_id},
         },
+        headers=headers,
         timeout=5,
     )
     response.raise_for_status()

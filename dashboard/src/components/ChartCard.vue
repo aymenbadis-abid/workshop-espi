@@ -83,6 +83,7 @@ function chartConfig(points) {
     options: {
       animation: false,
       responsive: true,
+      maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
         boardLimits: { lines: limits },
@@ -153,12 +154,16 @@ onBeforeUnmount(() => chart?.destroy());
       {{ label }}
       <span v-if="state" class="badge" :class="state === 'réelle' ? 'real' : 'sim'">{{ state }}</span>
     </h2>
-    <div v-if="points.length">
-      <slot />
-      <p v-if="latestClock" class="muted">Mesure à {{ latestClock }}</p>
-      <canvas ref="canvas"></canvas>
-      <p v-if="limitCaption" class="muted limit-caption">{{ limitCaption }}</p>
+    <div class="readout">
+      <template v-if="points.length">
+        <slot />
+        <p v-if="latestClock" class="muted">Mesure à {{ latestClock }}</p>
+      </template>
     </div>
-    <p v-else class="muted waiting">En attente de la carte ESP32</p>
+    <div class="plot">
+      <canvas v-show="points.length" ref="canvas"></canvas>
+      <p v-if="!points.length" class="muted waiting">En attente de la carte ESP32</p>
+    </div>
+    <p class="muted limit-caption">{{ limitCaption }}</p>
   </section>
 </template>

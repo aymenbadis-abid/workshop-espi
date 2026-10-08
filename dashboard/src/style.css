@@ -1,14 +1,15 @@
 :root {
   color-scheme: dark;
-  --bg: #12161c;
-  --panel: #1c2430;
-  --line: #2c3848;
-  --text: #e7eef6;
-  --muted: #93a4b8;
+  --bg: #0f141b;
+  --panel: #171e28;
+  --line: #2a3646;
+  --text: #e8eef6;
+  --muted: #8ea0b5;
   --accent: #3ddc97;
   --warn: #e6b35a;
   --danger: #ef6f6c;
-  font-family: "Segoe UI", system-ui, sans-serif;
+  --shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
 }
 
 * {
@@ -17,48 +18,111 @@
 
 body {
   margin: 0;
-  background: var(--bg);
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 480px at 10% -10%, #1a2736 0%, transparent 55%),
+    var(--bg);
   color: var(--text);
 }
 
-header {
+h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+h2 {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.eyebrow {
+  margin: 0 0 0.15rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.topbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
   padding: 1rem 1.5rem;
   border-bottom: 1px solid var(--line);
+  background: rgba(15, 20, 27, 0.86);
+  backdrop-filter: blur(10px);
 }
 
-h1 {
+.topbar-end {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+}
+
+.who {
   margin: 0;
-  font-size: 1.25rem;
-}
-
-h2 {
-  margin: 0 0 0.75rem;
-  font-size: 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .banner {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
+  gap: 0.85rem;
   padding: 1rem 1rem 0;
 }
 
-.banner article {
+.banner article,
+.panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 0.85rem 1rem 1rem;
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+
+.banner article {
+  position: relative;
+  overflow: hidden;
+  padding: 0.95rem 1rem 1.05rem 1.1rem;
+}
+
+.banner article::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--line);
+}
+
+.banner article.tone-ok::before {
+  background: var(--accent);
+}
+
+.banner article.tone-warn::before {
+  background: var(--warn);
+}
+
+.banner article.tone-danger::before {
+  background: var(--danger);
+}
+
+.banner article.tone-idle::before {
+  background: var(--muted);
 }
 
 .banner h2 {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.8rem;
-  font-weight: 600;
+  margin: 0 0 0.35rem;
 }
 
 .banner p {
@@ -80,8 +144,9 @@ h2 {
 
 .lead {
   margin: 0.35rem 0;
-  font-size: 1.2rem;
+  font-size: 1.25rem;
   font-weight: 650;
+  letter-spacing: -0.02em;
 }
 
 main {
@@ -89,19 +154,57 @@ main {
   grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr);
   gap: 1rem;
   padding: 1rem;
+  align-items: start;
+}
+
+.board-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
 }
 
 .charts {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
+  align-items: start;
+}
+
+.measure {
+  display: grid;
+  grid-row: span 4;
+  grid-template-rows: subgrid;
+  gap: 0.4rem;
+  align-content: start;
+}
+
+.measure h2,
+.measure .figure,
+.measure .readout p,
+.measure .limit-caption {
+  margin: 0;
+}
+
+.measure .readout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.plot {
+  position: relative;
+  height: 168px;
+}
+
+.plot canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
 }
 
 .panel {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 0.9rem 1rem 1rem;
+  padding: 0.95rem 1.05rem 1.1rem;
 }
 
 .badge {
@@ -127,9 +230,9 @@ main {
 
 .figure {
   margin: 0 0 0.35rem;
-  font-size: 1.7rem;
+  font-size: 1.85rem;
   font-weight: 650;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
 }
 
 .unit {
@@ -181,11 +284,16 @@ main {
 }
 
 .commands {
-  margin: 0 1rem 1rem;
+  margin: 0;
+  opacity: 0.96;
 }
 
-.commands h2 {
-  color: var(--muted);
+.findings-scroll {
+  max-height: 26rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #4a5d73 transparent;
 }
 
 .ack-line {
@@ -223,7 +331,8 @@ main {
 
 .live {
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
+  margin: 0;
 }
 
 .live.ok {
@@ -254,7 +363,7 @@ li {
 .waiting {
   display: flex;
   align-items: center;
-  min-height: 160px;
+  height: 100%;
   margin: 0;
 }
 
@@ -290,17 +399,83 @@ button {
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 0.35rem 0.7rem;
+  padding: 0.42rem 0.8rem;
   cursor: pointer;
+  font: inherit;
 }
 
-button:hover {
+button:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
-canvas {
-  width: 100% !important;
-  height: 160px !important;
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.ghost {
+  background: transparent;
+}
+
+.limit-caption:empty {
+  display: none;
+}
+
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.login-card {
+  width: min(26rem, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 1.6rem 1.5rem 1.4rem;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.login-card h1 {
+  margin: 0;
+}
+
+.login-card label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.login-card input {
+  background: #10161e;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  font: inherit;
+}
+
+.login-card button[type="submit"] {
+  background: #163528;
+  border-color: #245c42;
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.form-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.9rem;
 }
 
 @media (max-width: 1100px) {
@@ -314,5 +489,10 @@ canvas {
   .charts,
   .banner {
     grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

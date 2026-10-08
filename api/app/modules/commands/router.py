@@ -1,5 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.modules.auth.deps import require_user
 from app.modules.commands.schemas import CommandIn, CommandOut
 from app.modules.commands.service import publish_command
 
@@ -17,6 +18,6 @@ router = APIRouter()
         "sur sentinelx/g6/cmd. La carte répond sur sentinelx/esp32-01/ack."
     ),
 )
-async def post_command(body: CommandIn) -> CommandOut:
+async def post_command(body: CommandIn, _user: dict = Depends(require_user)) -> CommandOut:
     topic = await publish_command(body)
     return CommandOut(published=True, topic=topic)

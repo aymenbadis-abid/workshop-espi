@@ -5,6 +5,7 @@ from app.core.database import get_session
 from app.core.hub import hub
 from app.modules.alerts.schemas import AlertCreate, AlertOut
 from app.modules.alerts.service import create_alert, list_alerts
+from app.modules.auth.deps import require_user, require_vision
 
 router = APIRouter()
 
@@ -24,6 +25,7 @@ router = APIRouter()
 async def read_alerts(
     limit: int = Query(default=50, ge=1, le=500),
     session: AsyncSession = Depends(get_session),
+    _user: dict = Depends(require_user),
 ) -> list[AlertOut]:
     rows = await list_alerts(session, limit)
     return [AlertOut.model_validate(row) for row in rows]
@@ -44,6 +46,7 @@ async def read_alerts(
 async def post_alert(
     body: AlertCreate,
     session: AsyncSession = Depends(get_session),
+    _vision: None = Depends(require_vision),
 ) -> AlertOut:
     row = await create_alert(session, body, source="http")
     payload = AlertOut.model_validate(row).model_dump(mode="json")
