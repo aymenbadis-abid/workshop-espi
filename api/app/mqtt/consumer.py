@@ -19,7 +19,8 @@ from app.core.database import SessionLocal
 from app.core.hub import hub
 from app.modules.alerts.schemas import AlertCreate, AlertOut
 from app.modules.alerts.service import create_alert
-from app.modules.ml.service import score, should_emit
+from app.modules.ml.gate import paced_rows
+from app.modules.ml.service import assess, note_window, should_emit
 from app.modules.telemetry.schemas import StatusIn, StatusOut, TelemetryIn, TelemetryOut
 from app.modules.telemetry.service import recent_device_window, record_telemetry, upsert_status
 from app.mqtt.payloads import classify_topic, normalize_telemetry, parse_ack, parse_plain_status
@@ -53,13 +54,14 @@ async def _handle(topic: str, raw: dict) -> None:
         logger.warning("Ignored MQTT topic %s", topic)
         return
     kind, device_hint = classified
+    device_to_score = None
     async with SessionLocal() as session:
         if kind == "telemetry":
             payload = TelemetryIn.model_validate(normalize_telemetry(raw, device_hint))
             row = await record_telemetry(session, payload)
             body = TelemetryOut.model_validate(row).model_dump(mode="json")
             await hub.broadcast({"kind": "telemetry", "data": body})
-            await _score_window(session, payload.device)
+            device_to_score = payload.device
         elif kind == "alerts":
             if device_hint and "device" not in raw:
                 raw = {**raw, "device": device_hint}
@@ -76,6 +78,10 @@ async def _handle(topic: str, raw: dict) -> None:
             await hub.broadcast({"kind": "status", "data": body})
         elif kind == "ack":
             logger.warning("Ack topic %s carried a JSON object, expected text", topic)
+    # The model runs after the measure is already on the socket. The next
+    # packet is not held behind that score.
+    if device_to_score:
+        _schedule_score(device_to_score)
 
 
 async def _handle_text(topic: str, text: str) -> None:
@@ -104,23 +110,52 @@ async def _handle_text(topic: str, text: str) -> None:
     raise ValueError(f"Text payload is not valid on {topic}")
 
 
-async def _score_window(session, device: str) -> None:
-    rows = await recent_device_window(session, device, 30)
-    samples = [(row.temp, row.gas) for row in rows]
-    if not score(samples) or not should_emit(device):
+_score_locks: dict[str, asyncio.Lock] = {}
+_score_pending: set[str] = set()
+
+
+def _schedule_score(device: str) -> None:
+    lock = _score_locks.setdefault(device, asyncio.Lock())
+    if lock.locked():
+        _score_pending.add(device)
         return
-    alert = AlertCreate(
-        device=device,
-        type="anomaly",
-        message="Dérive détectée : température et gaz montent ensemble",
-        severity="warning",
-        ts=rows[-1].ts,
-        payload={"model": "isolation_forest"},
-    )
-    stored = await create_alert(session, alert, source="ml")
-    body = AlertOut.model_validate(stored).model_dump(mode="json")
-    await hub.broadcast({"kind": "alert", "data": body})
-    logger.info("Anomaly alert for %s", device)
+    asyncio.create_task(_score_until_quiet(device, lock))
+
+
+async def _score_until_quiet(device: str, lock: asyncio.Lock) -> None:
+    async with lock:
+        while True:
+            _score_pending.discard(device)
+            try:
+                async with SessionLocal() as session:
+                    await _score_window(session, device)
+            except Exception:
+                logger.exception("Scoring failed for %s", device)
+            if device not in _score_pending:
+                return
+
+
+async def _score_window(session, device: str) -> None:
+    # Six times the window covers a 2 s feed resampled onto the 5 s grid.
+    rows = await recent_device_window(session, device, 180)
+    assessment = assess(paced_rows(rows))
+    for finding in assessment.findings:
+        if not should_emit(device, finding.key):
+            continue
+        alert = AlertCreate(
+            device=device,
+            type="anomaly",
+            message=finding.message,
+            severity="warning",
+            ts=rows[-1].ts,
+            payload=finding.payload,
+        )
+        stored = await create_alert(session, alert, source="ml")
+        body = AlertOut.model_validate(stored).model_dump(mode="json")
+        await hub.broadcast({"kind": "alert", "data": body})
+        logger.info("Sensor finding for %s: %s", device, finding.message)
+    scoring = note_window(device, assessment)
+    await hub.broadcast({"kind": "scoring", "data": scoring})
 
 
 async def _consume_once() -> None:

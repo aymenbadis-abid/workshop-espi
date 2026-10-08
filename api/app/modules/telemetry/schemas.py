@@ -11,6 +11,15 @@ class TelemetryIn(BaseModel):
     gas: float
     light: float
     simulated: list[str] = Field(default_factory=list)
+    gas_raw: float | None = None
+    gas_delta: float | None = None
+    gas_ready: int | None = None
+    light_dark: int | None = None
+    transitions_1min: int | None = None
+    alert_heat: int | None = None
+    alert_gas: int | None = None
+    manual: int | None = None
+    rssi: int | None = None
 
 
 class TelemetryOut(BaseModel):
@@ -24,6 +33,15 @@ class TelemetryOut(BaseModel):
     gas: float
     light: float
     simulated: list[str]
+    gas_raw: float | None = None
+    gas_delta: float | None = None
+    gas_ready: int | None = None
+    light_dark: int | None = None
+    transitions_1min: int | None = None
+    alert_heat: int | None = None
+    alert_gas: int | None = None
+    manual: int | None = None
+    rssi: int | None = None
     received_at: datetime
 
 

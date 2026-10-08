@@ -15,6 +15,15 @@ async def record_telemetry(session: AsyncSession, payload: TelemetryIn) -> Telem
         gas=payload.gas,
         light=payload.light,
         simulated=payload.simulated,
+        gas_raw=payload.gas_raw,
+        gas_delta=payload.gas_delta,
+        gas_ready=payload.gas_ready,
+        light_dark=payload.light_dark,
+        transitions_1min=payload.transitions_1min,
+        alert_heat=payload.alert_heat,
+        alert_gas=payload.alert_gas,
+        manual=payload.manual,
+        rssi=payload.rssi,
     )
     session.add(row)
     await session.commit()

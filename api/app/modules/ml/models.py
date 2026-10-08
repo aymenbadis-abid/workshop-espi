@@ -1,1 +1,1 @@
-"""Isolation Forest scoring is added in a later step. No threshold logic lives here."""
+"""Isolation Forest scoring lives in service.py. There is no separate ML table."""

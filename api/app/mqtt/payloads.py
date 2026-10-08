@@ -33,6 +33,18 @@ def classify_topic(topic: str, simulator_base: str, device_base: str) -> tuple[s
     return None
 
 
+_BOARD_FLOATS = ("gas_raw", "gas_delta")
+_BOARD_INTS = (
+    "gas_ready",
+    "light_dark",
+    "transitions_1min",
+    "alert_heat",
+    "alert_gas",
+    "manual",
+    "rssi",
+)
+
+
 def _number_or_none(value: object) -> float | None:
     if value is None:
         return None
@@ -47,6 +59,19 @@ def _number_or_none(value: object) -> float | None:
     return number
 
 
+def _optional_float(data: dict, key: str) -> float | None:
+    if key not in data or data[key] is None:
+        return None
+    return _number_or_none(data[key])
+
+
+def _optional_int(data: dict, key: str) -> int | None:
+    number = _optional_float(data, key)
+    if number is None:
+        return None
+    return int(number)
+
+
 def normalize_telemetry(raw: dict, device_hint: str | None = None) -> dict:
     """Fill the fields the dashboard stores when the board omits them.
 
@@ -54,6 +79,10 @@ def normalize_telemetry(raw: dict, device_hint: str | None = None) -> dict:
     apart from numeric coercion. The DHT22 sketch names the same readings
     temperature and humidity. light_dark without light becomes a chart value.
     A missing or null channel gets a neutral baseline and is marked simulated.
+
+    Board facts (gas warmup, heat and gas flags, light, manual, rssi) are kept
+    when the board sent them. A missing key stays null: it is not a warmup and
+    not a heat level.
     """
     data = dict(raw)
     if device_hint and not data.get("device"):
@@ -89,6 +118,10 @@ def normalize_telemetry(raw: dict, device_hint: str | None = None) -> dict:
     data["hum"] = float(data["hum"])
     data["gas"] = float(data["gas"])
     data["light"] = float(data["light"])
+    for key in _BOARD_FLOATS:
+        data[key] = _optional_float(raw, key)
+    for key in _BOARD_INTS:
+        data[key] = _optional_int(raw, key)
     return data
 
 

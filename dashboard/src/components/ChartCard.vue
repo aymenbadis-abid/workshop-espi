@@ -1,18 +1,60 @@
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Chart, LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Tooltip } from "chart.js";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { Chart, LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Tooltip, Legend } from "chart.js";
 
-Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Tooltip);
+const boardLimitsPlugin = {
+  id: "boardLimits",
+  afterDraw(chart) {
+    const lines = chart.options.plugins?.boardLimits?.lines;
+    if (!lines?.length) return;
+    const { ctx, chartArea, scales } = chart;
+    const yScale = scales.y;
+    if (!chartArea || !yScale) return;
+    for (const line of lines) {
+      const y = yScale.getPixelForValue(line.value);
+      if (y < chartArea.top || y > chartArea.bottom) continue;
+      ctx.save();
+      ctx.beginPath();
+      ctx.strokeStyle = line.color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 4]);
+      ctx.moveTo(chartArea.left, y);
+      ctx.lineTo(chartArea.right, y);
+      ctx.stroke();
+      ctx.fillStyle = line.color;
+      ctx.font = "600 13px Segoe UI, sans-serif";
+      const width = ctx.measureText(line.label).width;
+      const textY = y - 14 < chartArea.top ? y + 14 : y - 6;
+      ctx.fillText(line.label, chartArea.right - width - 6, textY);
+      ctx.restore();
+    }
+  },
+};
+
+Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Tooltip, Legend, boardLimitsPlugin);
 
 const props = defineProps({
   label: { type: String, required: true },
   color: { type: String, required: true },
-  simulated: { type: Boolean, default: false },
+  state: { type: String, default: "" },
   points: { type: Array, required: true },
+  limits: { type: Array, default: () => [] },
+  limitCaption: { type: String, default: "" },
 });
 
 const canvas = ref(null);
 let chart;
+let chartGeneration = 0;
+
+const latestClock = computed(() => {
+  const point = props.points.at(-1);
+  if (!point || !Number.isFinite(point.ts)) return "";
+  return new Date(point.ts * 1000).toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+});
 
 function labelsOf(points) {
   return points.map((point) =>
@@ -21,6 +63,7 @@ function labelsOf(points) {
 }
 
 function chartConfig(points) {
+  const limits = props.limits;
   return {
     type: "line",
     data: {
@@ -40,23 +83,46 @@ function chartConfig(points) {
     options: {
       animation: false,
       responsive: true,
-      plugins: { legend: { display: false } },
+      plugins: {
+        legend: { display: false },
+        boardLimits: { lines: limits },
+      },
       scales: {
-        x: { ticks: { color: "#93a4b8", maxTicksLimit: 4 } },
-        y: { ticks: { color: "#93a4b8" } },
+        x: {
+          ticks: { color: "#93a4b8", maxTicksLimit: 4, autoSkip: true },
+          afterBuildTicks(scale) {
+            const ticks = scale.ticks;
+            if (!ticks.length || scale.max == null) return;
+            const last = ticks[ticks.length - 1];
+            if (last.value === scale.max) return;
+            ticks.push({ value: scale.max, label: scale.getLabelForValue(scale.max) });
+          },
+        },
+        y: {
+          bounds: "data",
+          ticks: { color: "#93a4b8", stepSize: 2 },
+          afterDataLimits(scale) {
+            if (!limits.length) return;
+            const top = Math.max(...limits.map((line) => line.value));
+            const bottom = Math.min(...limits.map((line) => line.value));
+            if (scale.max < top + 1) scale.max = top + 1;
+            if (scale.min > bottom - 2) scale.min = bottom - 2;
+          },
+        },
       },
     },
   };
 }
 
 async function syncChart(points) {
+  const generation = ++chartGeneration;
   if (!points.length) {
     chart?.destroy();
     chart = undefined;
     return;
   }
   await nextTick();
-  if (!canvas.value) return;
+  if (generation !== chartGeneration || !canvas.value) return;
   if (!chart) {
     chart = new Chart(canvas.value, chartConfig(points));
     return;
@@ -82,12 +148,17 @@ onBeforeUnmount(() => chart?.destroy());
 </script>
 
 <template>
-  <section class="panel">
+  <section class="panel measure">
     <h2>
       {{ label }}
-      <span v-if="simulated" class="badge">simulé</span>
+      <span v-if="state" class="badge" :class="state === 'réelle' ? 'real' : 'sim'">{{ state }}</span>
     </h2>
-    <p v-if="points.length === 0" class="muted waiting">En attente de la carte ESP32</p>
-    <canvas v-else ref="canvas"></canvas>
+    <div v-if="points.length">
+      <slot />
+      <p v-if="latestClock" class="muted">Mesure à {{ latestClock }}</p>
+      <canvas ref="canvas"></canvas>
+      <p v-if="limitCaption" class="muted limit-caption">{{ limitCaption }}</p>
+    </div>
+    <p v-else class="muted waiting">En attente de la carte ESP32</p>
   </section>
 </template>

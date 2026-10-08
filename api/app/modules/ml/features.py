@@ -19,6 +19,7 @@ FEATURE_NAMES = (
     "gas_std",
     "temp_gas_corr",
 )
+SERIES_FEATURE_NAMES = ("slope", "mean", "std")
 
 
 def _slope(index: np.ndarray, values: np.ndarray) -> float:
@@ -52,5 +53,21 @@ def feature_vector(samples: list[tuple[float, float]]) -> np.ndarray:
             float(gases.std()),
             _correlation(temps, gases),
         ],
+        dtype=float,
+    )
+
+
+def series_feature_vector(values: list[float]) -> np.ndarray:
+    """Build one feature row from a single channel, oldest first.
+
+    Temperature and humidity each have their own vector. Gas and light are not
+    described here.
+    """
+    if len(values) != WINDOW:
+        raise ValueError(f"Expected {WINDOW} samples, got {len(values)}")
+    series = np.array(values, dtype=float)
+    index = np.arange(WINDOW, dtype=float)
+    return np.array(
+        [_slope(index, series), float(series.mean()), float(series.std())],
         dtype=float,
     )

@@ -1,7 +1,7 @@
 // Sentinel-X ESP32 firmware.
 // Telemetry, retained status (with Last Will), plain commands, and ack.
 // Light is the LM393 module. Temperature and humidity come from the DHT22.
-// Gas stays simulated: the MQ-2 is not wired yet.
+// Gas is the MQ module on GPIO 35 (analog, through a 10k/10k divider).
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -10,6 +10,7 @@
 #include <Adafruit_SSD1306.h>
 #include <PubSubClient.h>
 #include <math.h>
+#include <string.h>
 #include <time.h>
 #include <sys/time.h>
 
@@ -26,22 +27,30 @@
 #if USE_DHT
 #include <DHT.h>
 #endif
+#ifndef USE_GAS
+#define USE_GAS 1
+#endif
 
 #define PIN_SDA 21
 #define PIN_SCL 22
 #define PIN_LIGHT 34
 #define PIN_DHT 32
+#define PIN_GAS 35
 #define PIN_BUZZER 25
 #define PIN_LED_G 26
 #define PIN_LED_R 27
 #define DHT_TYPE DHT22
 #define DHT_PERIOD_MS 2000
-// Server inlet air. ASHRAE recommended range ends near 27 C.
-// 35 C is outside that envelope: equipment throttles and the room is in danger.
+// MQ warmup in clean air, then the reading becomes the baseline.
+#define GAS_WARMUP_MS 60000UL
+#define GAS_ALERT_DELTA 400
+#define GAS_CLEAR_DELTA 250
+#define GAS_SMOOTH 0.1f
+// Server inlet air. Warning starts at 27 C. Danger starts at 33 C.
 #define TEMP_WARN_C 27.0f
 #define TEMP_WARN_CLEAR_C 25.0f
-#define TEMP_DANGER_C 35.0f
-#define TEMP_DANGER_CLEAR_C 33.0f
+#define TEMP_DANGER_C 33.0f
+#define TEMP_DANGER_CLEAR_C 31.0f
 
 #define READ_PERIOD_MS 200
 // Used only if the hotspot blocks NTP. Must stay after the broker certificate notBefore.
@@ -49,7 +58,9 @@
 #define BUILD_EPOCH 1791365334L
 #endif
 #define STABLE_READS 3
-#define SEND_PERIOD_MS 5000
+// DHT updates every 2 s. Publish at that pace so the screen follows the sensor.
+// The server keeps a 5 s grid for the room models.
+#define SEND_PERIOD_MS 2000
 #define WINDOW_MS 60000UL
 #define MAX_EVENTS 40
 
@@ -68,6 +79,10 @@ DHT dht(PIN_DHT, DHT_TYPE);
 bool displayReady = false;
 
 bool isDark = false;
+bool isGas = false;
+bool gasReady = false;
+float gasAvg = -1;
+int gasBaseline = 0;
 enum HeatLevel { HEAT_OK = 0, HEAT_WARN = 1, HEAT_DANGER = 2 };
 HeatLevel heat = HEAT_OK;
 float temperature = NAN;
@@ -84,10 +99,12 @@ unsigned long lastMqttTry = 0;
 unsigned long lastDht = 0;
 bool sendNow = false;
 
-// Manual override: -1 follows the light, 0 forced off, 1 forced on.
+// LEDs: -1 follows the alarm, 0 forced off, 1 forced on.
+// Buzzer: -1 follows the room, 0 forced silent, 1 forced strong beep.
 int ovRed = -1;
 int ovGreen = -1;
 int ovBuzzer = -1;
+unsigned long lastBeep = 0;
 
 enum Scenario { SC_NORMAL, SC_DRIFT, SC_GAS };
 Scenario scenario = SC_NORMAL;
@@ -113,7 +130,7 @@ bool clockReady() {
   return time(nullptr) > 1700000000;
 }
 
-bool alarmActive() { return isDark || heat != HEAT_OK; }
+bool alarmActive() { return isDark || heat != HEAT_OK || isGas; }
 
 HeatLevel nextHeatLevel(float temp) {
   if (heat == HEAT_OK) {
@@ -191,6 +208,16 @@ bool handlePlain(String s) {
   if (s == "auto") {
     ovRed = ovGreen = ovBuzzer = -1;
     return true;
+  }
+  if (s == "gas_cal") {
+#if USE_GAS
+    if (!gasReady) return false;
+    gasBaseline = (int)gasAvg;
+    isGas = false;
+    return true;
+#else
+    return false;
+#endif
   }
   if (s.startsWith("scenario:")) return applyScenario(s.substring(9));
   int sep = s.indexOf(':');
@@ -364,13 +391,79 @@ void readDht(unsigned long now) {
 #endif
 }
 
+void readGas(unsigned long now) {
+#if USE_GAS
+  int raw = analogRead(PIN_GAS);
+  if (gasAvg < 0) gasAvg = raw;
+  else gasAvg = gasAvg * (1.0f - GAS_SMOOTH) + raw * GAS_SMOOTH;
+  if (!gasReady) {
+    if (now >= GAS_WARMUP_MS) {
+      gasReady = true;
+      gasBaseline = (int)gasAvg;
+      Serial.print("[GAS] baseline ");
+      Serial.println(gasBaseline);
+    }
+    return;
+  }
+  int delta = (int)gasAvg - gasBaseline;
+  bool next = isGas;
+  if (!isGas && delta >= GAS_ALERT_DELTA) next = true;
+  if (isGas && delta <= GAS_CLEAR_DELTA) next = false;
+  if (next == isGas) return;
+  isGas = next;
+  sendNow = true;
+  if (isGas) {
+    Serial.println("[EVENT] gas");
+    publishAlert("gas", "Gaz élevé", "warning");
+  } else {
+    Serial.println("[EVENT] gas ok");
+    publishAlert("gas", "Gaz revenu à la normale", "info");
+  }
+#endif
+}
+
+// Passive piezo: a steady level only clicks. A square wave is the beep.
+void beep(int freq, int ms) {
+  long period = 1000000L / freq;
+  long cycles = (long)ms * 1000L / period;
+  for (long i = 0; i < cycles; i++) {
+    digitalWrite(PIN_BUZZER, HIGH);
+    delayMicroseconds(period / 2);
+    digitalWrite(PIN_BUZZER, LOW);
+    delayMicroseconds(period / 2);
+  }
+}
+
 void updateOutputs(unsigned long now) {
   bool alarm = alarmActive();
   bool red = (ovRed == -1) ? alarm : (ovRed == 1);
   bool green = (ovGreen == -1) ? !alarm : (ovGreen == 1);
   digitalWrite(PIN_LED_R, red ? HIGH : LOW);
   digitalWrite(PIN_LED_G, green ? HIGH : LOW);
-  digitalWrite(PIN_BUZZER, LOW);
+
+  bool strong = false;
+  bool weak = false;
+  if (ovBuzzer == 0) {
+    digitalWrite(PIN_BUZZER, LOW);
+    return;
+  }
+  if (ovBuzzer == 1) {
+    strong = true;
+  } else if (heat == HEAT_DANGER) {
+    strong = true;
+  } else if (heat == HEAT_WARN || isGas || isDark) {
+    weak = true;
+  }
+  if (!strong && !weak) {
+    digitalWrite(PIN_BUZZER, LOW);
+    return;
+  }
+  // Danger: longer tone, close together. Warning: shorter tone, further apart.
+  unsigned long period = strong ? 800 : 2000;
+  int length = strong ? 160 : 70;
+  if (now - lastBeep < period) return;
+  lastBeep = now;
+  beep(2000, length);
 }
 
 void drawScreen(unsigned long now) {
@@ -406,10 +499,22 @@ void drawScreen(unsigned long now) {
   display.print(mqtt.connected() ? "OK" : "KO");
   if (heat == HEAT_DANGER) display.print(" DANGER");
   else if (heat == HEAT_WARN) display.print(" CHAUD");
+  if (isGas) display.print(" GAZ");
   if (ovRed != -1 || ovGreen != -1 || ovBuzzer != -1) display.print(" MAN");
-  display.print("  ");
-  if (scenario == SC_DRIFT) display.print("derive");
-  else if (scenario == SC_GAS) display.print("gaz");
+  display.println();
+#if USE_GAS
+  if (gasAvg < 0) display.print("Gaz: --");
+  else if (!gasReady) {
+    unsigned long left = (GAS_WARMUP_MS > now) ? (GAS_WARMUP_MS - now) / 1000UL : 0;
+    display.print("Gaz: chauffe ");
+    display.print(left);
+    display.print("s");
+  } else {
+    display.print("Gaz:");
+    display.print((int)gasAvg);
+    if (isGas) display.print(" ALERTE");
+  }
+#endif
   display.display();
 }
 
@@ -417,32 +522,57 @@ void sendData(unsigned long now, float dt) {
   if (!mqtt.connected() || !clockReady()) return;
   if (dt < 0.2f) dt = 0.2f;
   if (dt > 30.0f) dt = 30.0f;
-  float simTemp, simHum, gas;
-  sampleSimulated(dt, &simTemp, &simHum, &gas);
+  float simTemp, simHum, simGas;
+  sampleSimulated(dt, &simTemp, &simHum, &simGas);
   bool tempReal = !isnan(temperature);
   bool humReal = !isnan(humidity);
+  bool gasReal = false;
+#if USE_GAS
+  gasReal = gasReady;
+#endif
   float temp = tempReal ? temperature : simTemp;
   float hum = humReal ? humidity : simHum;
+  float gas = gasReal ? gasAvg : simGas;
   bool manual = ovRed != -1 || ovGreen != -1 || ovBuzzer != -1;
   int rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
-  char simulated[48] = "\"gas\"";
-  if (!tempReal && !humReal) snprintf(simulated, sizeof(simulated), "\"temp\",\"hum\",\"gas\"");
-  else if (!tempReal) snprintf(simulated, sizeof(simulated), "\"temp\",\"gas\"");
-  else if (!humReal) snprintf(simulated, sizeof(simulated), "\"hum\",\"gas\"");
+  char simulated[64] = "";
+  bool wrote = false;
+  if (!tempReal) { strcat(simulated, "\"temp\""); wrote = true; }
+  if (!humReal) {
+    if (wrote) strcat(simulated, ",");
+    strcat(simulated, "\"hum\"");
+    wrote = true;
+  }
+  if (!gasReal) {
+    if (wrote) strcat(simulated, ",");
+    strcat(simulated, "\"gas\"");
+  }
   char tempField[16];
   char humField[16];
+  char gasRaw[16];
+  char gasDelta[16];
   if (tempReal) snprintf(tempField, sizeof(tempField), "%.1f", temperature);
   else snprintf(tempField, sizeof(tempField), "null");
   if (humReal) snprintf(humField, sizeof(humField), "%.1f", humidity);
   else snprintf(humField, sizeof(humField), "null");
-  char json[480];
+#if USE_GAS
+  if (gasAvg < 0) snprintf(gasRaw, sizeof(gasRaw), "null");
+  else snprintf(gasRaw, sizeof(gasRaw), "%d", (int)gasAvg);
+  if (!gasReady) snprintf(gasDelta, sizeof(gasDelta), "null");
+  else snprintf(gasDelta, sizeof(gasDelta), "%d", (int)gasAvg - gasBaseline);
+#else
+  snprintf(gasRaw, sizeof(gasRaw), "null");
+  snprintf(gasDelta, sizeof(gasDelta), "null");
+#endif
+  char json[640];
   snprintf(json, sizeof(json),
            "{\"device\":\"%s\",\"ts\":%lu,\"temp\":%.2f,\"hum\":%.2f,\"gas\":%.1f,\"light\":%d,"
-           "\"simulated\":[%s],\"temperature\":%s,\"humidity\":%s,\"light_dark\":%d,"
-           "\"transitions_1min\":%d,\"alert_heat\":%d,\"manual\":%d,\"rssi\":%d}",
+           "\"simulated\":[%s],\"temperature\":%s,\"humidity\":%s,\"gas_raw\":%s,\"gas_delta\":%s,"
+           "\"gas_ready\":%d,\"light_dark\":%d,\"transitions_1min\":%d,\"alert_heat\":%d,"
+           "\"alert_gas\":%d,\"manual\":%d,\"rssi\":%d}",
            DEVICE_ID, (unsigned long)time(nullptr), temp, hum, gas, lightValue, simulated,
-           tempField, humField, isDark ? 1 : 0, transitionsLastMinute(now), (int)heat,
-           manual ? 1 : 0, rssi);
+           tempField, humField, gasRaw, gasDelta, gasReal ? 1 : 0, isDark ? 1 : 0,
+           transitionsLastMinute(now), (int)heat, isGas ? 1 : 0, manual ? 1 : 0, rssi);
   Serial.println(json);
   mqtt.publish(T_TELEMETRY, json);
   publishStatus(true);
@@ -454,6 +584,9 @@ void setup() {
   pinMode(PIN_LED_R, OUTPUT);
   pinMode(PIN_BUZZER, OUTPUT);
   pinMode(PIN_LIGHT, INPUT);
+#if USE_GAS
+  analogSetPinAttenuation(PIN_GAS, ADC_11db);
+#endif
 #if USE_DHT
   dht.begin();
 #endif
@@ -472,7 +605,7 @@ void setup() {
   netClient.setHandshakeTimeout(8);
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(onMessage);
-  mqtt.setBufferSize(512);
+  mqtt.setBufferSize(768);
   mqtt.setSocketTimeout(4);
   Serial.println("Sentinel-X ESP32 started");
 }
@@ -483,6 +616,7 @@ void loop() {
     lastRead = now;
     readSensor(now);
     readDht(now);
+    readGas(now);
     updateOutputs(now);
     drawScreen(now);
   }

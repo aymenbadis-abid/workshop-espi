@@ -41,6 +41,12 @@ def test_original_board_telemetry_becomes_storable() -> None:
     assert out["temp"] == 24.0
     assert out["simulated"] == ["temp", "hum", "gas"]
     assert "ts" in out
+    assert out["gas_ready"] is None
+    assert out["gas_raw"] is None
+    assert out["alert_heat"] is None
+    assert out["light_dark"] == 1
+    assert out["manual"] == 0
+    assert out["rssi"] == -40
 
 
 def test_dht_telemetry_keeps_real_temperature_and_humidity() -> None:
@@ -62,6 +68,11 @@ def test_dht_telemetry_keeps_real_temperature_and_humidity() -> None:
     assert out["light"] == 640.0
     assert out["gas"] == 300.0
     assert out["simulated"] == ["gas"]
+    assert out["gas_ready"] is None
+    assert out["gas_raw"] is None
+    assert out["alert_heat"] == 0
+    assert out["light_dark"] == 0
+    assert out["rssi"] == -50
 
 
 def test_missing_dht_reading_is_marked_simulated() -> None:
@@ -92,6 +103,60 @@ def test_full_contract_is_not_rewritten() -> None:
     assert out["simulated"] == ["temp", "hum", "gas"]
 
 
+def test_board_facts_are_kept() -> None:
+    raw = {
+        "device": "esp32-01",
+        "ts": 1760000000,
+        "temp": 26.5,
+        "hum": 48.0,
+        "gas": 1810.0,
+        "light": 640,
+        "simulated": [],
+        "gas_raw": 1820,
+        "gas_delta": 0,
+        "gas_ready": 1,
+        "light_dark": 0,
+        "transitions_1min": 3,
+        "alert_heat": 1,
+        "alert_gas": 0,
+        "manual": 1,
+        "rssi": -48,
+    }
+    out = normalize_telemetry(raw, "esp32-01")
+    assert out["simulated"] == []
+    assert out["gas"] == 1810.0
+    assert out["gas_raw"] == 1820.0
+    assert out["gas_delta"] == 0.0
+    assert out["gas_ready"] == 1
+    assert out["alert_heat"] == 1
+    assert out["alert_gas"] == 0
+    assert out["manual"] == 1
+    assert out["rssi"] == -48
+
+
+def test_warmup_keeps_the_raw_reading_and_the_simulated_chart_value() -> None:
+    raw = {
+        "device": "esp32-01",
+        "ts": 1760000000,
+        "temp": 26.5,
+        "hum": 48.0,
+        "gas": 300.0,
+        "light": 640,
+        "simulated": ["gas"],
+        "gas_raw": 1500,
+        "gas_delta": None,
+        "gas_ready": 0,
+        "alert_gas": 0,
+        "alert_heat": 0,
+    }
+    out = normalize_telemetry(raw, "esp32-01")
+    assert out["simulated"] == ["gas"]
+    assert out["gas"] == 300.0
+    assert out["gas_raw"] == 1500.0
+    assert out["gas_delta"] is None
+    assert out["gas_ready"] == 0
+
+
 def test_status_and_ack_text() -> None:
     assert parse_plain_status("offline", "esp32-01")["online"] is False
     ok = parse_ack("ok:led_red:1", "esp32-01")
@@ -114,6 +179,8 @@ if __name__ == "__main__":
     test_dht_telemetry_keeps_real_temperature_and_humidity()
     test_missing_dht_reading_is_marked_simulated()
     test_full_contract_is_not_rewritten()
+    test_board_facts_are_kept()
+    test_warmup_keeps_the_raw_reading_and_the_simulated_chart_value()
     test_status_and_ack_text()
     test_command_text_matches_the_board()
     print("payload checks ok")

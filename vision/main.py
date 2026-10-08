@@ -1,8 +1,9 @@
 """Person detection on the host camera.
 
 Docker cannot see the laptop camera, so this process stays on the host.
-It resizes every frame to 640x480, runs YOLOv8n, logs inference latency,
-posts an alert, and serves an MJPEG stream for the dashboard.
+It resizes frames to 640x480, runs YOLOv8n with ByteTrack, posts one arrival
+and one departure, and serves an MJPEG stream. This file does not start
+itself on import. A heavier weight and a pose check are not enabled.
 """
 
 from __future__ import annotations
@@ -18,12 +19,21 @@ import cv2
 import requests
 from ultralytics import YOLO
 
+from presence import (
+    FRAME_SIZE,
+    INFER_INTERVAL_S,
+    MIN_CONFIDENCE,
+    Detection,
+    PresenceTracker,
+    ids_in_zone,
+    parse_zone,
+    zone_pixels,
+)
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("vision")
 
-FRAME_SIZE = (640, 480)
 PERSON_CLASS = 0
-ALERT_COOLDOWN_S = 8.0
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -85,25 +95,62 @@ def load_env(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip())
 
 
-def post_alert(api_url: str) -> None:
+def post_alert(api_url: str, message: str, kind: str, track_id: int) -> None:
     response = requests.post(
         f"{api_url.rstrip('/')}/api/v1/alerts",
         json={
             "device": "camera",
             "type": "person",
-            "message": "Personne détectée devant la caméra",
+            "message": message,
             "severity": "warning",
+            "payload": {"model": "YOLOv8n", "event": kind, "track_id": track_id},
         },
         timeout=5,
     )
     response.raise_for_status()
 
 
-def capture_loop(source: str, model: YOLO, api_url: str) -> None:
+def detections_from(result) -> list[Detection]:
+    boxes = result.boxes
+    if boxes is None or len(boxes) == 0:
+        return []
+    xyxy = boxes.xyxy.cpu().numpy()
+    confidences = boxes.conf.cpu().numpy()
+    identifiers = None if boxes.id is None else boxes.id.cpu().numpy()
+    found: list[Detection] = []
+    for index in range(len(xyxy)):
+        track_id = None if identifiers is None else int(identifiers[index])
+        x1, y1, x2, y2 = (float(value) for value in xyxy[index])
+        found.append(Detection(x1, y1, x2, y2, float(confidences[index]), track_id))
+    return found
+
+
+def draw_kept(frame, detections: list[Detection], zone_px: tuple[float, float, float, float]):
+    annotated = frame.copy()
+    x1, y1, x2, y2 = (int(value) for value in zone_px)
+    cv2.rectangle(annotated, (x1, y1), (x2, y2), (180, 180, 180), 1)
+    for detection in detections:
+        if detection.track_id is None:
+            continue
+        cv2.rectangle(
+            annotated,
+            (int(detection.x1), int(detection.y1)),
+            (int(detection.x2), int(detection.y2)),
+            (80, 220, 120),
+            2,
+        )
+    return annotated
+
+
+def capture_loop(source: str, model: YOLO, api_url: str, zone_raw: str | None) -> None:
     camera = open_source(source)
     if not camera.isOpened():
         raise RuntimeError(f"Cannot open video source {source}")
-    last_alert = 0.0
+    tracker = PresenceTracker()
+    zone_px = zone_pixels(FRAME_SIZE, parse_zone(zone_raw))
+    last_infer = 0.0
+    annotated = None
+    missing_id_logged = False
     while True:
         ok, frame = camera.read()
         if not ok:
@@ -114,24 +161,43 @@ def capture_loop(source: str, model: YOLO, api_url: str) -> None:
             camera = open_source(source)
             continue
         frame = cv2.resize(frame, FRAME_SIZE)
-        started = time.perf_counter()
-        results = model.predict(frame, classes=[PERSON_CLASS], verbose=False, imgsz=480)
-        latency_ms = (time.perf_counter() - started) * 1000.0
-        boxes = results[0].boxes
-        count = 0 if boxes is None else len(boxes)
-        logger.info("inference %.1f ms, persons=%s", latency_ms, count)
-        annotated = results[0].plot()
-        ok_jpeg, encoded = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+        now = time.monotonic()
+        if now - last_infer >= INFER_INTERVAL_S:
+            last_infer = now
+            started = time.perf_counter()
+            results = model.track(
+                frame,
+                persist=True,
+                classes=[PERSON_CLASS],
+                conf=MIN_CONFIDENCE,
+                tracker="bytetrack.yaml",
+                verbose=False,
+                imgsz=480,
+            )
+            latency_ms = (time.perf_counter() - started) * 1000.0
+            detections = detections_from(results[0])
+            kept_ids = ids_in_zone(detections, zone_px)
+            if not missing_id_logged and any(
+                item.track_id is None and item.confidence >= MIN_CONFIDENCE for item in detections
+            ):
+                logger.info("A person box has no track id; no arrival is posted for it")
+                missing_id_logged = True
+            logger.info("inference %.1f ms, persons=%s", latency_ms, len(kept_ids))
+            annotated = draw_kept(
+                frame,
+                [item for item in detections if item.track_id in kept_ids],
+                zone_px,
+            )
+            for event in tracker.update(kept_ids, now):
+                try:
+                    post_alert(api_url, event.message, event.kind, event.track_id)
+                    logger.info("Person %s posted for track %s", event.kind, event.track_id)
+                except requests.RequestException as exc:
+                    logger.warning("Alert post failed: %s", exc)
+        shown = frame if annotated is None else annotated
+        ok_jpeg, encoded = cv2.imencode(".jpg", shown, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
         if ok_jpeg:
             hub.publish(encoded.tobytes())
-        now = time.monotonic()
-        if count > 0 and now - last_alert >= ALERT_COOLDOWN_S:
-            try:
-                post_alert(api_url)
-                last_alert = now
-                logger.info("Person alert posted")
-            except requests.RequestException as exc:
-                logger.warning("Alert post failed: %s", exc)
 
 
 class StreamHandler(BaseHTTPRequestHandler):
@@ -166,7 +232,11 @@ def main() -> None:
     weights = Path(os.environ.get("YOLO_WEIGHTS", ROOT / "vision" / "weights" / "yolov8n.pt"))
     weights.parent.mkdir(parents=True, exist_ok=True)
     model = YOLO(str(weights))
-    threading.Thread(target=capture_loop, args=(source, model, api_url), daemon=True).start()
+    threading.Thread(
+        target=capture_loop,
+        args=(source, model, api_url, os.environ.get("VISION_ZONE")),
+        daemon=True,
+    ).start()
     server = ThreadingHTTPServer(("0.0.0.0", port), StreamHandler)
     logger.info("MJPEG stream on port %s, source %s", port, source)
     server.serve_forever()
